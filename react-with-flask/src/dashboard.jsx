@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useAuthRedirect } from './useAuthRedirect.js';
 import React, { useState, useEffect } from 'react';
+import { marked } from 'marked';
 import './dashboard.css';
 
 function Dashboard() {
@@ -16,6 +17,13 @@ function Dashboard() {
   const [addingIds, setAddingIds] = useState({}); // map of id->boolean
   const [addMessage, setAddMessage] = useState('');
   const [hasSearched, setHasSearched] = useState(false); // track if search has been performed
+  const [favoritingIds, setFavoritingIds] = useState({}); // map of id->boolean for favorite operations
+  const [showFavorites, setShowFavorites] = useState(false); // toggle to show favorites instead of search
+  
+  // Favorites state
+  const [favorites, setFavorites] = useState([]);
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [favoritesError, setFavoritesError] = useState('');
 
   // Fridge items state
   const [fridgeItems, setFridgeItems] = useState([]);
@@ -24,6 +32,13 @@ function Dashboard() {
   const [deletingIds, setDeletingIds] = useState({}); // map of id->boolean for delete operations
   const [editingIds, setEditingIds] = useState({}); // map of id->boolean for edit operations
   const [editFormData, setEditFormData] = useState({}); // map of id->form data for editing
+
+  // Recipe generation state
+  const [recipeQuery, setRecipeQuery] = useState('');
+  const [generatingRecipe, setGeneratingRecipe] = useState(false);
+  const [recipeResponse, setRecipeResponse] = useState(null);
+  const [recipeError, setRecipeError] = useState('');
+  const [showRecipeCard, setShowRecipeCard] = useState(false);
 
   // Configure API base (adjust if your Flask runs elsewhere)
   const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5001';
@@ -53,9 +68,34 @@ function Dashboard() {
     }
   };
 
-  // Load fridge items on component mount
+  // Fetch favorites
+  const fetchFavorites = async () => {
+    setFavoritesLoading(true);
+    setFavoritesError('');
+    try {
+      const token = getAccessToken();
+      const userId = auth.user?.profile?.sub || 'demo_user';
+      const resp = await fetch(`${API_BASE}/api/favorites?user_id=${userId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || `Failed to fetch favorites with status ${resp.status}`);
+      }
+      const data = await resp.json();
+      setFavorites(Array.isArray(data) ? data : (data.favorites || []));
+    } catch (err) {
+      console.error('Fetch favorites error:', err);
+      setFavoritesError(err.message || 'Failed to load favorites');
+    } finally {
+      setFavoritesLoading(false);
+    }
+  };
+
+  // Load fridge items and favorites on component mount
   useEffect(() => {
     fetchFridgeItems();
+    fetchFavorites();
   }, []);
 
   // Helper function to get user's display name
@@ -120,7 +160,15 @@ function Dashboard() {
     setHasSearched(true); // Mark that a search has been performed
     try {
       const token = getAccessToken();
-      const resp = await fetch(`${API_BASE}/api/search?query=${encodeURIComponent(query)}`, {
+      const userId = auth.user?.profile?.sub || 'demo_user';
+      
+      // Build query parameters
+      const params = new URLSearchParams({
+        query: query,
+        user_id: userId
+      });
+      
+      const resp = await fetch(`${API_BASE}/api/search?${params.toString()}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!resp.ok) {
@@ -297,6 +345,293 @@ function Dashboard() {
     }
   };
 
+  // Recipe generation functions
+  const handleGenerateRecipe = async (e) => {
+    e?.preventDefault();
+    setGeneratingRecipe(true);
+    setRecipeError('');
+    setRecipeResponse(null);
+    
+    try {
+      const token = getAccessToken();
+      const userId = auth.user?.profile?.sub || 'demo_user'; // Use actual user ID
+      
+      const resp = await fetch(`${API_BASE}/api/ai/recipe-suggestions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          message: recipeQuery || 'What can I cook with my available groceries?',
+          user_id: userId
+        }),
+      });
+      
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || `Recipe generation failed with status ${resp.status}`);
+      }
+      
+      const data = await resp.json();
+      setRecipeResponse(data);
+      setShowRecipeCard(true);
+      
+    } catch (err) {
+      console.error('Recipe generation error:', err);
+      setRecipeError(err.message || 'Failed to generate recipe');
+    } finally {
+      setGeneratingRecipe(false);
+    }
+  };
+
+  const handleRecipeQueryChange = (e) => {
+    setRecipeQuery(e.target.value);
+  };
+
+  const resetRecipe = () => {
+    setRecipeResponse(null);
+    setRecipeError('');
+    setShowRecipeCard(false);
+    setRecipeQuery('');
+  };
+
+  // Favorites functionality
+  const handleToggleFavorite = async (item) => {
+    const itemKey = item.id || item.name;
+    setFavoritingIds((prev) => ({ ...prev, [itemKey]: true }));
+    
+    try {
+      const token = getAccessToken();
+      const userId = auth.user?.profile?.sub || 'demo_user';
+      
+      if (item.is_favorite && item.favorite_id) {
+        // Remove from favorites
+        const resp = await fetch(`${API_BASE}/api/favorites/${item.favorite_id}?user_id=${userId}`, {
+          method: 'DELETE',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(text || `Failed to remove from favorites with status ${resp.status}`);
+        }
+        
+        // Update item in results
+        setResults(prev => prev.map(r => r.id === item.id ? 
+          { ...r, is_favorite: false, favorite_id: null } : r
+        ));
+        
+        // Refresh favorites list
+        fetchFavorites();
+      } else {
+        // Add to favorites
+        const favoriteData = {
+          user_id: userId,
+          display_name: item.name
+        };
+        
+        // Determine if it's a USDA item or local item
+        if (item.source === 'usda' && item.fdc_id) {
+          // For USDA items, we need to create a local FoodItem first or reference existing one
+          favoriteData.food_item_id = null; // The backend should handle USDA item creation
+        } else if (item.food_item_id) {
+          favoriteData.food_item_id = item.food_item_id;
+        } else if (item.custom_food_id) {
+          favoriteData.custom_food_id = item.custom_food_id;
+        }
+        
+        const resp = await fetch(`${API_BASE}/api/favorites`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(favoriteData),
+        });
+        
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(text || `Failed to add to favorites with status ${resp.status}`);
+        }
+        
+        const data = await resp.json();
+        
+        // Update item in results
+        setResults(prev => prev.map(r => r.id === item.id ? 
+          { ...r, is_favorite: true, favorite_id: data.id } : r
+        ));
+        
+        // Refresh favorites list
+        fetchFavorites();
+      }
+    } catch (err) {
+      console.error('Toggle favorite error:', err);
+      alert(`Failed to ${item.is_favorite ? 'remove from' : 'add to'} favorites: ${err.message}`);
+    } finally {
+      setFavoritingIds((prev) => ({ ...prev, [itemKey]: false }));
+    }
+  };
+  
+  // Remove favorite from favorites list
+  const handleRemoveFavorite = async (favoriteId, itemName) => {
+    setFavoritingIds((prev) => ({ ...prev, [favoriteId]: true }));
+    
+    try {
+      const token = getAccessToken();
+      const userId = auth.user?.profile?.sub || 'demo_user';
+      
+      const resp = await fetch(`${API_BASE}/api/favorites/${favoriteId}?user_id=${userId}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || `Failed to remove from favorites with status ${resp.status}`);
+      }
+      
+      // Remove item from favorites list
+      setFavorites(prev => prev.filter(fav => fav.id !== favoriteId));
+      
+      // Update any search results that might show this item
+      setResults(prev => prev.map(r => 
+        (r.favorite_id === favoriteId) ? 
+        { ...r, is_favorite: false, favorite_id: null } : r
+      ));
+      
+    } catch (err) {
+      console.error('Remove favorite error:', err);
+      alert(`Failed to remove ${itemName} from favorites: ${err.message}`);
+    } finally {
+      setFavoritingIds((prev) => ({ ...prev, [favoriteId]: false }));
+    }
+  };
+
+  // Function to render Markdown content safely
+  const renderMarkdown = (text) => {
+    try {
+      // Remove the MACROS_JSON block from the text before rendering
+      let cleanText = text.replace(/<MACROS_JSON>.*?<\/MACROS_JSON>/gs, '').trim();
+      
+      // Remove common AI preamble patterns
+      cleanText = cleanText.replace(/^I'd love to help you create.*?\n\n/s, ''); // Remove "I'd love to help" intros
+      cleanText = cleanText.replace(/^Here's a.*?recipe.*?:\n\n/si, ''); // Remove "Here's a recipe" intros
+      cleanText = cleanText.replace(/^Let me suggest.*?:\n\n/si, ''); // Remove "Let me suggest" intros
+      cleanText = cleanText.replace(/^Based on.*?here's.*?:\n\n/si, ''); // Remove "Based on your ingredients" intros
+      cleanText = cleanText.replace(/^Perfect! I can help.*?\n\n/si, ''); // Remove "Perfect! I can help" intros
+      cleanText = cleanText.replace(/^Great! Using your.*?\n\n/si, ''); // Remove "Great! Using your" intros
+      
+      // Clean up any remaining standalone introductory sentences
+      cleanText = cleanText.replace(/^.*allows you to use up items that may be expiring soon\.\s*\n\n/si, '');
+      cleanText = cleanText.replace(/^.*This recipe is versatile.*?\n\n/si, '');
+      
+      // Clean up extra whitespace
+      cleanText = cleanText.replace(/\n\s*\n\s*\n/g, '\n\n').trim();
+      
+      // Split text into lines to extract title and serving info
+      const lines = cleanText.split('\n');
+      let title = '';
+      let servingInfo = '';
+      let remainingContent = cleanText;
+      
+      // Extract first line as title if it doesn't start with common recipe section indicators
+      if (lines.length > 0 && lines[0].trim() && 
+          !lines[0].toLowerCase().startsWith('ingredients') &&
+          !lines[0].toLowerCase().startsWith('instructions') &&
+          !lines[0].toLowerCase().startsWith('directions') &&
+          !lines[0].toLowerCase().includes('step ')) {
+        
+        // Clean the title by removing markdown formatting and list indicators
+        let rawTitle = lines[0].trim();
+        // Remove numbered list indicators (e.g., "1) ", "2) ", etc.)
+        rawTitle = rawTitle.replace(/^\d+[.)\]\s]+/, '');
+        // Remove markdown bold formatting
+        rawTitle = rawTitle.replace(/\*\*(.*?)\*\*/g, '$1');
+        // Remove other markdown formatting
+        rawTitle = rawTitle.replace(/[*_`]/g, '');
+        title = rawTitle;
+        
+        // Check if second line contains serving/time info
+        if (lines.length > 1 && lines[1].trim()) {
+          const secondLine = lines[1].trim().toLowerCase();
+          if ((secondLine.includes('serving') || secondLine.includes('time') || 
+               secondLine.includes('prep') || secondLine.includes('cook') ||
+               secondLine.includes('total') || secondLine.includes('yield')) &&
+              !secondLine.startsWith('ingredients') &&
+              !secondLine.startsWith('instructions') &&
+              !secondLine.startsWith('directions')) {
+            
+            // Clean the serving info by removing markdown formatting and list indicators
+            let rawServingInfo = lines[1].trim();
+            // Remove numbered list indicators
+            rawServingInfo = rawServingInfo.replace(/^\d+[.)\]\s]+/, '');
+            // Remove markdown bold formatting
+            rawServingInfo = rawServingInfo.replace(/\*\*(.*?)\*\*/g, '$1');
+            // Remove other markdown formatting
+            rawServingInfo = rawServingInfo.replace(/[*_`]/g, '');
+            servingInfo = rawServingInfo;
+            
+            // Remove title and serving info from remaining content
+            remainingContent = lines.slice(2).join('\n').trim();
+          } else {
+            // Remove just the title from remaining content
+            remainingContent = lines.slice(1).join('\n').trim();
+          }
+        } else {
+          // Remove just the title from remaining content
+          remainingContent = lines.slice(1).join('\n').trim();
+        }
+      }
+      
+      // Configure marked options for safety
+      marked.setOptions({
+        breaks: true,
+        gfm: true,
+        sanitize: true,
+        smartLists: true,
+        smartypants: true
+      });
+      
+      // Convert remaining markdown to HTML
+      const htmlContent = remainingContent ? marked(remainingContent) : '';
+      
+      // Return JSX with special formatting for title and serving info
+      return (
+        <div className="markdown-content">
+          {title && <h1 className="recipe-title">{title}</h1>}
+          {servingInfo && <div className="recipe-serving-info">{servingInfo}</div>}
+          {htmlContent && <div dangerouslySetInnerHTML={{ __html: htmlContent }} />}
+        </div>
+      );
+    } catch (error) {
+      console.error('Markdown rendering error:', error);
+      // Fallback to plain text display (also clean the text)
+      let cleanText = text.replace(/<MACROS_JSON>.*?<\/MACROS_JSON>/gs, '').trim();
+      
+      // Apply same cleaning to fallback
+      cleanText = cleanText.replace(/^I'd love to help you create.*?\n\n/s, '');
+      cleanText = cleanText.replace(/^Here's a.*?recipe.*?:\n\n/si, '');
+      cleanText = cleanText.replace(/^Let me suggest.*?:\n\n/si, '');
+      cleanText = cleanText.replace(/^Based on.*?here's.*?:\n\n/si, '');
+      cleanText = cleanText.replace(/^Perfect! I can help.*?\n\n/si, '');
+      cleanText = cleanText.replace(/^Great! Using your.*?\n\n/si, '');
+      cleanText = cleanText.replace(/^.*allows you to use up items that may be expiring soon\.\s*\n\n/si, '');
+      cleanText = cleanText.replace(/^.*This recipe is versatile.*?\n\n/si, '');
+      cleanText = cleanText.replace(/\n\s*\n\s*\n/g, '\n\n').trim();
+      
+      return (
+        <div className="recipe-text">
+          {cleanText.split('\n').map((line, index) => (
+            <p key={index} className={line.trim() === '' ? 'recipe-blank-line' : 'recipe-line'}>
+              {line.trim() || '\u00A0'}
+            </p>
+          ))}
+        </div>
+      );
+    }
+  };
+
 
   return (
     <div className="dashboard-page">
@@ -304,7 +639,7 @@ function Dashboard() {
         <div className="nav-content">
           <div className="nav-left">
             <img className = "nav-logo" src = "ks.png"></img>
-            <h2>KitchenSync</h2>
+            <h2>basil</h2>
             <Link to="/" className="nav-link">← Back to Landing</Link>
           </div>
           <div className="nav-actions">
@@ -322,7 +657,7 @@ function Dashboard() {
         <div className="dashboard-container">
           <div className="dashboard-header">
             <h1>Welcome to Your Fridge</h1>
-            {/* <p>This is a protected page only visible to authenticated users.</p> */}
+            <p>Feeling chilly?</p>
           </div>
 
           <div className="dashboard-grid">
@@ -332,31 +667,62 @@ function Dashboard() {
                 <h3>🧊 Add Items to Your Fridge</h3>
               </div>
               <div className="card-content">
-                <form className="search-form" onSubmit={handleSearch}>
-                  <input
-                    type="text"
-                    className="search-input"
-                    placeholder="Search ingredients (e.g., chicken, milk, broccoli)"
-                    value={query}
-                    onChange={handleQueryChange}
-                  />
-                  <button type="submit" className="btn btn-primary" disabled={searching || !query.trim()}>
-                    {searching ? 'Searching...' : 'Search'}
-                  </button>
-                </form>
+                <div className="search-controls">
+                  <div className="toggle-container">
+                    <label className="toggle-switch">
+                      <input
+                        type="checkbox"
+                        checked={showFavorites}
+                        onChange={(e) => setShowFavorites(e.target.checked)}
+                      />
+                      <span className="toggle-slider"></span>
+                    </label>
+                    <span className="toggle-label">
+                      {showFavorites ? 'Showing Favorites' : 'Show Favorites'}
+                    </span>
+                  </div>
+                </div>
+                
+                {!showFavorites && (
+                  <form className="search-form" onSubmit={handleSearch}>
+                    <input
+                      type="text"
+                      className="search-input"
+                      placeholder="Search ingredients (e.g., chicken, milk, broccoli)"
+                      value={query}
+                      onChange={handleQueryChange}
+                    />
+                    <button type="submit" className="btn btn-primary" disabled={searching || !query.trim()}>
+                      {searching ? 'Searching...' : 'Search'}
+                    </button>
+                  </form>
+                )}
 
-                {searchError && <p className="search-error">{searchError}</p>}
+                {!showFavorites && searchError && <p className="search-error">{searchError}</p>}
+                {showFavorites && favoritesError && <p className="search-error">{favoritesError}</p>}
                 {addMessage && <p className="search-message">{addMessage}</p>}
 
-                {hasSearched && !searching && results.length === 0 && !searchError && (
+                {!showFavorites && hasSearched && !searching && results.length === 0 && !searchError && (
                   <div className="no-results">
                     <p>No items found in database for "{query}"</p>
                     <p className="no-results-hint">Try searching for a different ingredient or check your spelling.</p>
                   </div>
                 )}
 
+                {showFavorites && favoritesLoading && (
+                  <p className="loading-message">Loading your favorites...</p>
+                )}
+
+                {showFavorites && !favoritesLoading && favorites.length === 0 && !favoritesError && (
+                  <div className="no-results">
+                    <p>You haven't favorited any items yet.</p>
+                    <p className="no-results-hint">Search for ingredients and click the star (☆) to add them to your favorites!</p>
+                  </div>
+                )}
+
                 <ul className="search-results">
-                  {results.map((item) => (
+                  {/* Show search results when not showing favorites */}
+                  {!showFavorites && results.map((item) => (
                     <li key={item.id || item.name} className="search-result-row">
                       <div className="search-result-main">
                         <span className="result-name">{item.name}</span>
@@ -364,11 +730,54 @@ function Dashboard() {
                       </div>
                       <div className="search-result-actions">
                         <button
+                          className={`favorite-btn ${item.is_favorite ? 'favorited' : ''}`}
+                          onClick={() => handleToggleFavorite(item)}
+                          disabled={!!favoritingIds[item.id || item.name]}
+                          title={item.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+                        >
+                          {favoritingIds[item.id || item.name] ? '⏳' : (item.is_favorite ? '⭐' : '☆')}
+                        </button>
+                        <button
                           className="btn btn-primary"
                           onClick={() => handleAddToFridge(item)}
                           disabled={!!addingIds[item.id || item.name]}
                         >
                           {addingIds[item.id || item.name] ? 'Adding...' : 'Add'}
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                  
+                  {/* Show favorites when toggle is on */}
+                  {showFavorites && favorites.map((favorite) => (
+                    <li key={favorite.id} className="search-result-row">
+                      <div className="search-result-main">
+                        <span className="result-name">{favorite.display_name}</span>
+                        {favorite.category && <span className="result-category">{favorite.category}</span>}
+                      </div>
+                      <div className="search-result-actions">
+                        <button
+                          className="favorite-btn favorited"
+                          onClick={() => handleRemoveFavorite(favorite.id, favorite.display_name)}
+                          disabled={!!favoritingIds[favorite.id]}
+                          title="Remove from favorites"
+                        >
+                          {favoritingIds[favorite.id] ? '⏳' : '⭐'}
+                        </button>
+                        <button
+                          className="btn btn-primary"
+                          onClick={() => {
+                            // Create an item object that matches the expected format
+                            const item = {
+                              id: favorite.food_item_id || favorite.custom_food_id || favorite.id,
+                              name: favorite.display_name,
+                              category: favorite.category
+                            };
+                            handleAddToFridge(item);
+                          }}
+                          disabled={!!addingIds[favorite.food_item_id || favorite.custom_food_id || favorite.id]}
+                        >
+                          {addingIds[favorite.food_item_id || favorite.custom_food_id || favorite.id] ? 'Adding...' : 'Add'}
                         </button>
                       </div>
                     </li>
@@ -527,9 +936,113 @@ function Dashboard() {
               </div>
             </div>
 
-            {/* <div className="dashboard-card">
-              
-            </div> */}
+            {/* AI Recipe Generation Card */}
+            <div className="dashboard-card recipe-generation-card">
+              <div className="card-header">
+                <h3>🤖 AI Recipe Suggestions</h3>
+                <small>Powered by Mosaic AI • Uses your fridge items</small>
+              </div>
+              <div className="card-content">
+                {!showRecipeCard ? (
+                  // Recipe generation form
+                  <>
+                    <form className="recipe-form" onSubmit={handleGenerateRecipe}>
+                      <input
+                        type="text"
+                        className="recipe-input"
+                        placeholder="What would you like to cook?"
+                        value={recipeQuery}
+                        onChange={handleRecipeQueryChange}
+                      />
+                      <button 
+                        type="submit" 
+                        className="btn btn-primary recipe-generate-btn" 
+                        disabled={generatingRecipe || fridgeItems.length === 0}
+                      >
+                        {generatingRecipe ? '🧠 Generating...' : '✨ Generate Recipe'}
+                      </button>
+                    </form>
+                    <p className="recipe-examples">
+                      e.g., "Something quick for dinner", "Use my expiring ingredients", "Healthy meal with chicken"
+                    </p>
+                    
+                    {fridgeItems.length === 0 && (
+                      <p className="recipe-hint">
+                        💡 Add some items to your fridge first to get personalized recipe suggestions!
+                      </p>
+                    )}
+                    
+                    {fridgeItems.length > 0 && (
+                      <div className="fridge-preview">
+                        <p className="fridge-preview-title">Your available ingredients:</p>
+                        <div className="fridge-preview-items">
+                          {fridgeItems.slice(0, 6).map((item, index) => (
+                            <span key={item.id} className="fridge-preview-item">
+                              {item.name}{index < Math.min(fridgeItems.length, 6) - 1 ? ', ' : ''}
+                            </span>
+                          ))}
+                          {fridgeItems.length > 6 && <span className="fridge-preview-more">+{fridgeItems.length - 6} more</span>}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {recipeError && <p className="recipe-error">{recipeError}</p>}
+                  </>
+                ) : (
+                  // Recipe response display
+                  <div className="recipe-response">
+                    <div className="recipe-response-header">
+                      <button className="btn btn-secondary btn-sm" onClick={resetRecipe}>
+                        ← Generate New Recipe
+                      </button>
+                    </div>
+                    
+                    <div className="recipe-content">
+                      {recipeResponse?.recipe_suggestions && (
+                        <div className="recipe-text">
+                          {renderMarkdown(recipeResponse.recipe_suggestions)}
+                        </div>
+                      )}
+                      
+                      {recipeResponse?.macros && (
+                        <div className="recipe-macros">
+                          <h4>Nutritional Information (per serving)</h4>
+                          <div className="macros-grid">
+                            <div className="macro-item">
+                              <span className="macro-label">Calories</span>
+                              <span className="macro-value">{recipeResponse.macros.macros_per_serving?.calories || 'N/A'}</span>
+                            </div>
+                            <div className="macro-item">
+                              <span className="macro-label">Protein</span>
+                              <span className="macro-value">{recipeResponse.macros.macros_per_serving?.protein_g || 'N/A'}g</span>
+                            </div>
+                            <div className="macro-item">
+                              <span className="macro-label">Carbs</span>
+                              <span className="macro-value">{recipeResponse.macros.macros_per_serving?.carbs_g || 'N/A'}g</span>
+                            </div>
+                            <div className="macro-item">
+                              <span className="macro-label">Fat</span>
+                              <span className="macro-value">{recipeResponse.macros.macros_per_serving?.fat_g || 'N/A'}g</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="recipe-footer">
+                        <p className="powered-by">
+                          🚀 Powered by {recipeResponse?.powered_by || 'Mosaic AI'}
+                        </p>
+                        {recipeResponse?.timestamp && (
+                          <p className="generated-time">
+                            Generated at {new Date(recipeResponse.timestamp * 1000).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="user-profile-section">
@@ -538,7 +1051,7 @@ function Dashboard() {
               <div className="profile-details">
                 <p><strong>Name:</strong> {auth.user?.profile?.name || auth.user?.profile?.given_name || 'Not available'}</p>
                 <p><strong>Email:</strong> {auth.user?.profile?.email || 'Not available'}</p>
-                <p><strong>User ID:</strong> {auth.user?.profile?.sub || 'Not available'}</p>
+                {/* <p><strong>User ID:</strong> {auth.user?.profile?.sub || 'Not available'}</p> */}
                 <p><strong>Email Verified:</strong> {auth.user?.profile?.email_verified ? 'Yes' : 'No'}</p>
               </div>
             </div>

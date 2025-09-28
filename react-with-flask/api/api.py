@@ -1,14 +1,24 @@
 import time
+from datetime import datetime, timedelta
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from sqlalchemy.orm import joinedload
+import re
 
 # Load environment variables (for OPENAI_KEY in .env)
 import os
 try:
     from dotenv import load_dotenv, find_dotenv
     # Find .env starting from here and upwards (project root has .env)
-    load_dotenv(find_dotenv(), override=True)
-except Exception:
+    env_file = find_dotenv()
+    if env_file:
+        print(f"📄 Loading .env from: {env_file}")
+        load_dotenv(env_file, override=True)
+        print(f"🔑 OPENAI_KEY loaded: {'Yes' if os.getenv('OPENAI_KEY') else 'No'}")
+    else:
+        print("⚠️  No .env file found")
+except Exception as e:
+    print(f"❌ Error loading .env: {e}")
     # Safe fallback if dotenv isn't available; env vars will still work if set in the shell
     pass
 
@@ -40,6 +50,100 @@ CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"],
 
 # Initialize database and tables on startup
 init_db()
+
+
+def get_smart_expiration_days(food_name: str, category: str = None, data_type: str = None) -> int:
+    """Calculate smart expiration days based on food type and name."""
+    food_name_lower = food_name.lower()
+    category_lower = (category or '').lower()
+    data_type_lower = (data_type or '').lower()
+    
+    # Very perishable items (1-3 days)
+    very_perishable = [
+        'lettuce', 'spinach', 'arugula', 'kale', 'mixed greens', 'salad',
+        'berries', 'strawberries', 'raspberries', 'blackberries', 'blueberries',
+        'mushrooms', 'sprouts', 'herbs', 'basil', 'cilantro', 'parsley',
+        'fish', 'seafood', 'shrimp', 'crab', 'lobster', 'salmon', 'tuna',
+        'ground meat', 'ground beef', 'ground chicken', 'ground turkey'
+    ]
+    
+    # Short-term perishable (3-7 days)
+    short_term = [
+        'broccoli', 'cauliflower', 'asparagus', 'green beans', 'peas',
+        'bananas', 'avocado', 'tomatoes', 'cucumber', 'zucchini', 'bell pepper',
+        'milk', 'cream', 'yogurt', 'sour cream', 'cottage cheese',
+        'chicken breast', 'chicken thigh', 'pork', 'beef steak', 'fresh meat',
+        'bread', 'bagels', 'muffins', 'croissant'
+    ]
+    
+    # Medium-term perishable (1-2 weeks)
+    medium_term = [
+        'carrots', 'celery', 'cabbage', 'onions', 'garlic',
+        'apples', 'oranges', 'lemons', 'limes', 'grapes', 'pears',
+        'cheese', 'cheddar', 'mozzarella', 'swiss', 'parmesan',
+        'eggs', 'butter', 'margarine'
+    ]
+    
+    # Long-term items (3-4 weeks)
+    long_term = [
+        'potatoes', 'sweet potatoes', 'winter squash', 'pumpkin',
+        'whole grain bread', 'tortillas'
+    ]
+    
+    # Very long-term / pantry items (6+ months)
+    pantry_items = [
+        'rice', 'pasta', 'beans', 'lentils', 'quinoa', 'oats',
+        'flour', 'sugar', 'salt', 'spices', 'oil', 'vinegar',
+        'canned', 'frozen', 'dried', 'cereal', 'crackers', 'nuts'
+    ]
+    
+    # Check by specific food name keywords
+    for item in very_perishable:
+        if item in food_name_lower:
+            return 2  # 2 days
+    
+    for item in short_term:
+        if item in food_name_lower:
+            return 5  # 5 days
+    
+    for item in medium_term:
+        if item in food_name_lower:
+            return 10  # 10 days
+    
+    for item in long_term:
+        if item in food_name_lower:
+            return 21  # 3 weeks
+    
+    for item in pantry_items:
+        if item in food_name_lower:
+            return 180  # 6 months
+    
+    # Check by category/data_type
+    if any(x in category_lower for x in ['produce', 'vegetable', 'fruit']):
+        # Fresh produce - shorter expiration
+        if any(x in food_name_lower for x in ['lettuce', 'greens', 'berries']):
+            return 2
+        else:
+            return 7  # 1 week for most produce
+    
+    if any(x in category_lower for x in ['dairy', 'milk']):
+        return 7  # 1 week for dairy
+    
+    if any(x in category_lower for x in ['meat', 'poultry', 'seafood']):
+        return 3  # 3 days for fresh meat
+    
+    if any(x in category_lower for x in ['frozen']):
+        return 90  # 3 months for frozen items
+    
+    if any(x in category_lower for x in ['canned', 'pantry']):
+        return 365  # 1 year for canned/pantry items
+    
+    if data_type_lower == 'branded_food':
+        # Processed foods typically last longer
+        return 30  # 1 month
+    
+    # Default fallback
+    return 14  # 2 weeks
 
 
 @app.route('/api/time')
@@ -192,6 +296,388 @@ def api_usda_search_with_nutrition():
             break
     
     return jsonify(enhanced_results)
+
+
+@app.get('/api/search')
+def api_unified_search():
+    """Unified search endpoint for dashboard compatibility - searches both USDA and local foods"""
+    query = (request.args.get('query') or '').strip()
+    limit = int(request.args.get('limit', '20'))
+    favorites_only = request.args.get('favorites_only', '').lower() == 'true'
+    user_id = request.args.get('user_id', 'demo_user')
+    
+    results = []
+    
+    # Import models for favorites
+    from models import UserFavorite
+    
+    session = SessionLocal()
+    try:
+        if favorites_only:
+            # Search only user's favorites
+            favs = (
+                session.query(UserFavorite)
+                .filter(UserFavorite.user_id == user_id)
+                .options(joinedload(UserFavorite.food_item), joinedload(UserFavorite.custom_food))
+                .order_by(UserFavorite.created_at.desc())
+                .all()
+            )
+            
+            for fav in favs:
+                if query and query.lower() not in (fav.display_name or '').lower():
+                    # If there's a search query, filter by it
+                    if fav.food_item and query.lower() not in fav.food_item.name.lower():
+                        continue
+                    elif fav.custom_food and query.lower() not in fav.custom_food.name.lower():
+                        continue
+                
+                if fav.food_item:
+                    item = {
+                        'id': f"local_{fav.food_item.id}",
+                        'name': fav.display_name or fav.food_item.name,
+                        'category': fav.food_item.category,
+                        'brand': fav.food_item.brand,
+                        'source': 'local',
+                        'food_item_id': fav.food_item.id,
+                        'is_favorite': True,
+                        'favorite_id': fav.id
+                    }
+                elif fav.custom_food:
+                    item = {
+                        'id': f"custom_{fav.custom_food.id}",
+                        'name': fav.display_name or fav.custom_food.name,
+                        'category': 'Custom Food',
+                        'brand': None,
+                        'source': 'custom',
+                        'custom_food_id': fav.custom_food.id,
+                        'is_favorite': True,
+                        'favorite_id': fav.id
+                    }
+                
+                results.append(item)
+                if len(results) >= limit:
+                    break
+        else:
+            # Regular search with favorite status
+            if not query:
+                return jsonify([])
+                
+            # Get user's favorites to mark them in results
+            user_favorites = {}
+            favs = (
+                session.query(UserFavorite)
+                .filter(UserFavorite.user_id == user_id)
+                .all()
+            )
+            for fav in favs:
+                if fav.food_item_id:
+                    user_favorites[f"local_{fav.food_item_id}"] = fav.id
+                elif fav.custom_food_id:
+                    user_favorites[f"custom_{fav.custom_food_id}"] = fav.id
+            
+            # Search USDA database first
+            if USDA_ENGINE is not None:
+                try:
+                    usda_results = search_usda(USDA_ENGINE, query, limit)
+                    for result in usda_results:
+                        # Transform USDA results to match dashboard expectations
+                        item_id = f"usda_{result.get('fdc_id')}"
+                        item = {
+                            'id': item_id,
+                            'name': result.get('description', ''),
+                            'category': result.get('data_type', ''),
+                            'brand': result.get('brand_name') or result.get('brand_owner'),
+                            'source': 'usda',
+                            'fdc_id': result.get('fdc_id'),
+                            'is_favorite': item_id in user_favorites,
+                            'favorite_id': user_favorites.get(item_id)
+                        }
+                        results.append(item)
+                except Exception as e:
+                    print(f"USDA search error: {e}")
+            
+            # Search local food items
+            local_foods = session.query(FoodItem).filter(
+                FoodItem.name.ilike(f'%{query}%')
+            ).limit(limit - len(results)).all()
+            
+            for food in local_foods:
+                item_id = f"local_{food.id}"
+                item = {
+                    'id': item_id,
+                    'name': food.name,
+                    'category': food.category,
+                    'brand': food.brand,
+                    'source': 'local',
+                    'food_item_id': food.id,
+                    'is_favorite': item_id in user_favorites,
+                    'favorite_id': user_favorites.get(item_id)
+                }
+                results.append(item)
+    
+    except Exception as e:
+        print(f"Search error: {e}")
+    finally:
+        session.close()
+    
+    return jsonify(results[:limit])
+
+
+# Fridge API endpoints for dashboard compatibility (wraps grocery endpoints)
+@app.route('/api/fridge', methods=['GET'])
+def api_get_fridge_items():
+    """Get user's fridge items - compatibility wrapper for grocery endpoints"""
+    user_id = request.args.get('user_id', 'demo_user')
+    
+    session = SessionLocal()
+    try:
+        groceries = session.query(UserGrocery).filter(
+            UserGrocery.user_id == user_id,
+            UserGrocery.is_expired == False
+        ).options(
+            joinedload(UserGrocery.food_item).joinedload(FoodItem.nutrition),
+            joinedload(UserGrocery.custom_food)
+        ).order_by(UserGrocery.created_at.desc()).all()
+        
+        result = []
+        for grocery in groceries:
+            # Transform grocery data to match frontend expectations
+            food_info = {}
+            if grocery.food_item:
+                food_info = {
+                    'name': grocery.food_item.name,
+                    'brand': grocery.food_item.brand,
+                    'category': grocery.food_item.category,
+                }
+            elif grocery.custom_food:
+                food_info = {
+                    'name': grocery.custom_food.name,
+                    'brand': None,
+                    'category': 'Custom Food',
+                }
+            
+            item = {
+                'id': grocery.id,
+                'name': food_info.get('name', ''),
+                'brand': food_info.get('brand'),
+                'category': food_info.get('category'),
+                'quantity': grocery.quantity,
+                'unit': grocery.unit,
+                'expiry_date': grocery.expiration_date.isoformat() if grocery.expiration_date else None,
+                'created_at': grocery.created_at.isoformat(),
+                'updated_at': grocery.updated_at.isoformat()
+            }
+            result.append(item)
+        
+        return jsonify(result)
+        
+    finally:
+        session.close()
+
+
+@app.route('/api/fridge', methods=['POST'])
+def api_add_fridge_item():
+    """Add item to fridge - compatibility wrapper for grocery endpoints"""
+    data = request.get_json()
+    user_id = data.get('user_id', 'demo_user')
+    
+    # Handle both USDA and local items from search results
+    item_id = data.get('item_id')
+    name = data.get('name', '')
+    category = data.get('category')
+    
+    session = SessionLocal()
+    try:
+        # Calculate smart expiration date based on food type
+        smart_days = get_smart_expiration_days(name, category)
+        default_expiry = datetime.now().date() + timedelta(days=smart_days)
+        
+        print(f"🎯 Smart expiry for '{name}' (category: {category}): {smart_days} days → {default_expiry}")
+        
+        grocery = UserGrocery(
+            user_id=user_id,
+            quantity=1.0,
+            unit='items',
+            location='fridge',
+            expiration_date=default_expiry
+        )
+        
+        # Determine if this is a USDA item or needs to be created as custom
+        if item_id and item_id.startswith('usda_'):
+            # Extract USDA FDC ID and import the item first
+            fdc_id_str = item_id.replace('usda_', '')
+            try:
+                fdc_id = int(fdc_id_str)
+                # Try to import from USDA first
+                from usda_queries import get_food_basic, get_basic_nutrients
+                if USDA_ENGINE:
+                    basic = get_food_basic(USDA_ENGINE, fdc_id)
+                    facts = get_basic_nutrients(USDA_ENGINE, fdc_id)
+                    
+                    if basic:
+                        # Create local FoodItem
+                        food_name = basic.get('description')
+                        brand = basic.get('brand_name') or basic.get('brand_owner')
+                        upc = basic.get('gtin_upc')
+                        
+                        # Check if already exists
+                        existing_food = session.query(FoodItem).filter(
+                            FoodItem.name == food_name,
+                            FoodItem.brand == brand,
+                            FoodItem.upc == upc
+                        ).first()
+                        
+                        if not existing_food:
+                            existing_food = FoodItem(
+                                name=food_name,
+                                brand=brand,
+                                category=category,
+                                upc=upc,
+                                is_perishable=True
+                            )
+                            session.add(existing_food)
+                            session.flush()
+                            
+                            # Add nutrition facts
+                            if facts:
+                                nutrition = NutritionFacts(
+                                    food_item_id=existing_food.id,
+                                    calories=facts.get('calories'),
+                                    protein_g=facts.get('protein_g'),
+                                    carbs_g=facts.get('carbs_g'),
+                                    fat_g=facts.get('fat_g'),
+                                    fiber_g=facts.get('fiber_g'),
+                                    sugar_g=facts.get('sugar_g')
+                                )
+                                session.add(nutrition)
+                        
+                        grocery.food_item_id = existing_food.id
+                    else:
+                        # Fall back to custom food
+                        custom_food = CustomFood(
+                            name=name,
+                            description=f"Imported from search: {name}",
+                            user_id=user_id
+                        )
+                        session.add(custom_food)
+                        session.flush()
+                        grocery.custom_food_id = custom_food.id
+            except (ValueError, TypeError):
+                # Invalid FDC ID format, create as custom food
+                custom_food = CustomFood(
+                    name=name,
+                    description=f"Added from search: {name}",
+                    user_id=user_id
+                )
+                session.add(custom_food)
+                session.flush()
+                grocery.custom_food_id = custom_food.id
+                
+        elif item_id and item_id.startswith('local_'):
+            # Local food item - extract the ID
+            local_id_str = item_id.replace('local_', '')
+            try:
+                local_id = int(local_id_str)
+                grocery.food_item_id = local_id
+            except (ValueError, TypeError):
+                return jsonify({'error': 'Invalid local food item ID'}), 400
+        else:
+            # Create as custom food
+            custom_food = CustomFood(
+                name=name,
+                description=f"Added manually: {name}",
+                user_id=user_id
+            )
+            session.add(custom_food)
+            session.flush()
+            grocery.custom_food_id = custom_food.id
+        
+        session.add(grocery)
+        session.commit()
+        
+        return jsonify({
+            'id': grocery.id,
+            'message': f'{name} added to fridge successfully'
+        }), 201
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({'error': f'Failed to add item: {str(e)}'}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/fridge/<int:item_id>', methods=['PUT'])
+def api_update_fridge_item(item_id: int):
+    """Update fridge item - compatibility wrapper for grocery endpoints"""
+    data = request.get_json()
+    user_id = data.get('user_id', 'demo_user')
+    
+    session = SessionLocal()
+    try:
+        grocery = session.query(UserGrocery).filter(
+            UserGrocery.id == item_id,
+            UserGrocery.user_id == user_id
+        ).first()
+        
+        if not grocery:
+            return jsonify({'error': 'Item not found'}), 404
+        
+        # Update fields if provided
+        if 'quantity' in data:
+            grocery.quantity = float(data['quantity'])
+        if 'unit' in data:
+            grocery.unit = data['unit']
+        if 'expiry_date' in data:
+            if data['expiry_date']:
+                grocery.expiration_date = datetime.fromisoformat(data['expiry_date']).date()
+            else:
+                grocery.expiration_date = None
+        if 'created_at' in data:
+            if data['created_at']:
+                # Update purchase date instead of created_at
+                grocery.purchase_date = datetime.fromisoformat(data['created_at']).date()
+        
+        grocery.updated_at = datetime.utcnow()
+        session.commit()
+        
+        return jsonify({
+            'id': grocery.id,
+            'message': 'Item updated successfully'
+        })
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({'error': f'Failed to update item: {str(e)}'}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/fridge/<int:item_id>', methods=['DELETE'])
+def api_delete_fridge_item(item_id: int):
+    """Delete fridge item - compatibility wrapper for grocery endpoints"""
+    user_id = request.args.get('user_id', 'demo_user')
+    
+    session = SessionLocal()
+    try:
+        grocery = session.query(UserGrocery).filter(
+            UserGrocery.id == item_id,
+            UserGrocery.user_id == user_id
+        ).first()
+        
+        if not grocery:
+            return jsonify({'error': 'Item not found'}), 404
+        
+        session.delete(grocery)
+        session.commit()
+        
+        return jsonify({'message': 'Item removed from fridge'})
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({'error': f'Failed to delete item: {str(e)}'}), 500
+    finally:
+        session.close()
 
 
 @app.get('/api/usda/upc/<upc>')

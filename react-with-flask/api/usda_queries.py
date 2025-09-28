@@ -16,8 +16,8 @@ NUTRIENT_IDS = {
 
 
 def search_usda(engine: Engine, q: str, limit: int = 20) -> list[dict]:
-    # Searches across description, brand fields, and exact UPC match
-    # Prioritize data types that are more likely to have nutrition info
+    # Searches across ALL food descriptions, prioritizing basic/foundation foods
+    # over branded foods to give more variety and basic ingredients
     sql = text(
         """
         SELECT f.fdc_id,
@@ -37,12 +37,15 @@ def search_usda(engine: Engine, q: str, limit: int = 20) -> list[dict]:
            OR b.gtin_upc = :q
         ORDER BY 
             CASE f.data_type 
-                WHEN 'branded_food' THEN 1
-                WHEN 'foundation_food' THEN 2
-                WHEN 'sr_legacy_food' THEN 3
-                WHEN 'survey_fndds_food' THEN 4
-                ELSE 5
+                WHEN 'foundation_food' THEN 1
+                WHEN 'sr_legacy_food' THEN 2
+                WHEN 'survey_fndds_food' THEN 3
+                WHEN 'sub_sample_food' THEN 4
+                WHEN 'sample_food' THEN 5
+                WHEN 'branded_food' THEN 6
+                ELSE 7
             END,
+            LENGTH(f.description),
             f.fdc_id DESC
         LIMIT :limit
         """
@@ -99,42 +102,48 @@ def get_food_basic(engine: Engine, fdc_id: int) -> Optional[dict]:
 def get_basic_nutrients(engine: Engine, fdc_id: int) -> dict:
     # Join food_nutrient -> nutrient and pull a few common macros by nutrient_id
     # Note: some schemas may store nutrient number differently; adjust if needed
-    sql = text(
-        """
-        SELECT fn.nutrient_id, n.name, n.unit_name, fn.amount
-        FROM food_nutrient fn
-        JOIN nutrient n ON n.id = fn.nutrient_id
-        WHERE fn.fdc_id = :fdc_id
-          AND fn.nutrient_id IN (:cal, :pro, :carb, :fat, :fiber, :sugar)
-        """
-    )
-    with engine.connect() as conn:
-        rows = conn.execute(
-            sql,
-            {
-                "fdc_id": fdc_id,
-                "cal": NUTRIENT_IDS["calories_kcal"],
-                "pro": NUTRIENT_IDS["protein_g"],
-                "carb": NUTRIENT_IDS["carbs_g"],
-                "fat": NUTRIENT_IDS["fat_g"],
-                "fiber": NUTRIENT_IDS["fiber_g"],
-                "sugar": NUTRIENT_IDS["sugar_g"],
-            },
-        ).fetchall()
-    out: dict = {}
-    for r in rows:
-        nid = r._mapping["nutrient_id"]
-        amt = float(r._mapping["amount"]) if r._mapping["amount"] is not None else None
-        if nid == NUTRIENT_IDS["calories_kcal"]:
-            out["calories"] = amt
-        elif nid == NUTRIENT_IDS["protein_g"]:
-            out["protein_g"] = amt
-        elif nid == NUTRIENT_IDS["carbs_g"]:
-            out["carbs_g"] = amt
-        elif nid == NUTRIENT_IDS["fat_g"]:
-            out["fat_g"] = amt
-        elif nid == NUTRIENT_IDS["fiber_g"]:
-            out["fiber_g"] = amt
-        elif nid == NUTRIENT_IDS["sugar_g"]:
-            out["sugar_g"] = amt
-    return out
+    # Handle case where food_nutrient table doesn't exist (simplified database)
+    try:
+        sql = text(
+            """
+            SELECT fn.nutrient_id, n.name, n.unit_name, fn.amount
+            FROM food_nutrient fn
+            JOIN nutrient n ON n.id = fn.nutrient_id
+            WHERE fn.fdc_id = :fdc_id
+              AND fn.nutrient_id IN (:cal, :pro, :carb, :fat, :fiber, :sugar)
+            """
+        )
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sql,
+                {
+                    "fdc_id": fdc_id,
+                    "cal": NUTRIENT_IDS["calories_kcal"],
+                    "pro": NUTRIENT_IDS["protein_g"],
+                    "carb": NUTRIENT_IDS["carbs_g"],
+                    "fat": NUTRIENT_IDS["fat_g"],
+                    "fiber": NUTRIENT_IDS["fiber_g"],
+                    "sugar": NUTRIENT_IDS["sugar_g"],
+                },
+            ).fetchall()
+        out: dict = {}
+        for r in rows:
+            nid = r._mapping["nutrient_id"]
+            amt = float(r._mapping["amount"]) if r._mapping["amount"] is not None else None
+            if nid == NUTRIENT_IDS["calories_kcal"]:
+                out["calories"] = amt
+            elif nid == NUTRIENT_IDS["protein_g"]:
+                out["protein_g"] = amt
+            elif nid == NUTRIENT_IDS["carbs_g"]:
+                out["carbs_g"] = amt
+            elif nid == NUTRIENT_IDS["fat_g"]:
+                out["fat_g"] = amt
+            elif nid == NUTRIENT_IDS["fiber_g"]:
+                out["fiber_g"] = amt
+            elif nid == NUTRIENT_IDS["sugar_g"]:
+                out["sugar_g"] = amt
+        return out
+    except Exception as e:
+        # If food_nutrient table doesn't exist or other DB error, return empty dict
+        print(f"Warning: Could not get nutrients for fdc_id {fdc_id}: {e}")
+        return {}

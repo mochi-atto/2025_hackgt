@@ -16,3 +16,5 @@ FoodData_Central_csv_*/
 
 # Keep vendor directory but ignore content
 !data/vendor/.gitkeep
+
+data/

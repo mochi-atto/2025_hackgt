@@ -151,7 +151,7 @@ function Landing() {
         <div className="nav-content">
           <div className="nav-left">
             <img className = "nav-logo" src = "ks.png"></img>
-            <h2>KitchenSync</h2>
+            <h2>basil</h2>
           </div>
           <div className="nav-actions">
             {auth.isAuthenticated ? (
@@ -181,7 +181,7 @@ function Landing() {
       <div className="landing-main">
         <div className="hero-section">
           <h1 className="hero-title">
-            {auth.isAuthenticated ? `Welcome back, ${getDisplayName()}!` : 'Welcome to KitchenSync'}
+            {auth.isAuthenticated ? `Welcome back, ${getDisplayName()}!` : 'Welcome to basil'}
           </h1>
           <p className="hero-subtitle">
             {auth.isAuthenticated 
@@ -214,7 +214,7 @@ function Landing() {
         
         <div className="features-section">
           <h2>How can we help you?</h2>
-          <h4>KitchenSync is built to help you waste less, save more, and eat better. Our goal is to minimize food waste by making sure every ingredient gets used, saving you money while encouraging creativity in the kitchen. We’re here to help you stay nourished and inspired, whether that means reaching protein goals, discovering new dishes, or making the most of what’s in your fridge.
+          <h4>basil is built to help you waste less, save more, and eat better. Our goal is to minimize food waste by making sure every ingredient gets used, saving you money while encouraging creativity in the kitchen. We’re here to help you stay nourished and inspired, whether that means reaching protein goals, discovering new dishes, or making the most of what’s in your fridge.
           </h4>
           <div className="features-grid">
             <div className="feature-card">
