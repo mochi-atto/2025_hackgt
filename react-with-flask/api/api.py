@@ -1,5 +1,12 @@
 import time
 from flask import Flask, jsonify, request
+from flask_cors import CORS
+
+# Import our MosaicML AI assistant
+try:
+    from .mosaic_nutrition_ai import mosaic_nutrition_ai
+except ImportError:
+    from mosaic_nutrition_ai import mosaic_nutrition_ai
 
 # Robust imports to work both as a module and as a script
 try:
@@ -16,6 +23,7 @@ except ImportError:  # Running as a script
     from usda_queries import search_usda, lookup_upc, get_basic_nutrients, get_food_basic
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for React frontend
 
 # Initialize database and tables on startup
 init_db()
@@ -24,6 +32,36 @@ init_db()
 @app.route('/api/time')
 def get_current_time():
     return {'time': time.time()}
+
+
+@app.route('/api/test-ai', methods=['POST'])
+def test_ai():
+    """Simple AI test endpoint"""
+    try:
+        from openai import OpenAI
+        
+        api_key = "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"
+        
+        client = OpenAI(api_key=api_key, timeout=10.0)
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": "Say hello in 3 words"}],
+            max_tokens=10
+        )
+        
+        return jsonify({
+            'success': True,
+            'response': response.choices[0].message.content,
+            'timestamp': time.time()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': str(type(e))
+        }), 500
 
 
 @app.route('/api/foods', methods=['GET'])
@@ -137,41 +175,6 @@ def api_usda_search_with_nutrition():
     return jsonify(enhanced_results)
 
 
-@app.get('/api/usda/debug/<int:fdc_id>')
-def api_usda_debug(fdc_id: int):
-    """Debug endpoint to check nutrition data availability"""
-    if USDA_ENGINE is None:
-        return jsonify({'error': 'USDA DB not found'}), 503
-    
-    # Check basic food info
-    basic = get_food_basic(USDA_ENGINE, fdc_id)
-    
-    # Check raw nutrient data
-    from sqlalchemy import text
-    sql = text("""
-        SELECT fn.nutrient_id, n.name, n.unit_name, fn.amount
-        FROM food_nutrient fn
-        LEFT JOIN nutrient n ON n.id = fn.nutrient_id
-        WHERE fn.fdc_id = :fdc_id
-        LIMIT 10
-    """)
-    
-    with USDA_ENGINE.connect() as conn:
-        raw_nutrients = conn.execute(sql, {"fdc_id": fdc_id}).fetchall()
-    
-    nutrients_data = [dict(row._mapping) for row in raw_nutrients]
-    
-    # Check processed nutrients
-    processed_nutrients = get_basic_nutrients(USDA_ENGINE, fdc_id)
-    
-    return jsonify({
-        'fdc_id': fdc_id,
-        'basic_info': basic,
-        'raw_nutrients_sample': nutrients_data,
-        'processed_nutrients': processed_nutrients
-    })
-
-
 @app.get('/api/usda/upc/<upc>')
 def api_usda_upc(upc: str):
     if USDA_ENGINE is None:
@@ -241,6 +244,172 @@ def api_usda_import(fdc_id: int):
         return jsonify({'error': str(e)}), 500
     finally:
         session.close()
+
+
+@app.route('/api/ai/chat', methods=['POST'])
+def ai_chat():
+    """AI-powered nutrition chat using MosaicML"""
+    print(f"🔥 [AI Chat] Starting request processing at {time.time()}")
+    
+    try:
+        print("📝 [AI Chat] Parsing request data...")
+        data = request.get_json()
+        user_message = data.get('message', '').strip() if data else ''
+        
+        print(f"💬 [AI Chat] User message: {user_message[:100]}...")
+        
+        if not user_message:
+            print("❌ [AI Chat] Empty message received")
+            return jsonify({'error': 'Message is required'}), 400
+        
+        print("🤖 [AI Chat] Calling MosaicML AI service...")
+        # Generate AI response using MosaicML
+        ai_response = mosaic_nutrition_ai.generate_nutrition_advice(user_message)
+        
+        print(f"✅ [AI Chat] Response generated: {len(ai_response)} characters")
+        
+        response_data = {
+            'user_message': user_message,
+            'ai_response': ai_response,
+            'timestamp': time.time(),
+            'powered_by': 'MosaicML (Databricks Open Source)'
+        }
+        
+        print("📤 [AI Chat] Returning response to client")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        print(f"❌ [AI Chat] Error occurred: {str(e)}")
+        print(f"❌ [AI Chat] Error type: {type(e)}")
+        import traceback
+        print(f"❌ [AI Chat] Traceback: {traceback.format_exc()}")
+        
+        return jsonify({
+            'error': f'MosaicML service error: {str(e)}',
+            'error_type': str(type(e)),
+            'timestamp': time.time()
+        }), 500
+
+
+@app.route('/api/ai/status', methods=['GET'])
+def ai_status():
+    """Check if MosaicML AI is ready"""
+    ai_ready = mosaic_nutrition_ai.is_ready()
+    return jsonify({
+        'ai_ready': ai_ready,
+        'service': 'MosaicML',
+        'model': 'Databricks Open Source',
+        'status': 'ready' if ai_ready else 'initializing'
+    })
+
+
+# Recipe Generation Endpoints
+@app.route('/api/recipes/generate', methods=['POST'])
+def generate_recipe():
+    """Generate a single recipe based on parameters"""
+    try:
+        data = request.get_json() or {}
+        
+        # Extract parameters
+        meal_type = data.get('meal_type', 'dinner')
+        dietary_preferences = data.get('dietary_preferences', [])
+        nutrition_goals = data.get('nutrition_goals', {})
+        servings = data.get('servings', 2)
+        
+        # Recipe generation not yet implemented - return placeholder
+        return jsonify({'error': 'Recipe generation feature coming soon!'}), 501
+        
+    except Exception as e:
+        return jsonify({'error': f'Recipe generation error: {str(e)}'}), 500
+
+
+@app.route('/api/recipes/meal-plan', methods=['POST'])
+def generate_meal_plan():
+    """Generate a complete meal plan"""
+    try:
+        data = request.get_json() or {}
+        
+        # Extract parameters
+        days = data.get('days', 7)
+        meals_per_day = data.get('meals_per_day', 3)
+        
+        # Meal plan generation not yet implemented - return placeholder
+        return jsonify({'error': 'Meal plan generation feature coming soon!'}), 501
+        
+    except Exception as e:
+        return jsonify({'error': f'Meal plan generation error: {str(e)}'}), 500
+
+
+@app.route('/api/recipes/suggestions', methods=['GET'])
+def recipe_suggestions():
+    """Get recipe suggestions based on available ingredients or preferences"""
+    try:
+        # Get query parameters
+        ingredients = request.args.get('ingredients', '').split(',') if request.args.get('ingredients') else []
+        meal_type = request.args.get('meal_type', 'dinner')
+        dietary_pref = request.args.get('dietary', '').split(',') if request.args.get('dietary') else []
+        
+        # Recipe suggestions not yet implemented - return placeholder  
+        return jsonify({'error': 'Recipe suggestions feature coming soon!'}), 501
+        
+    except Exception as e:
+        return jsonify({'error': f'Suggestion generation error: {str(e)}'}), 500
+
+
+# Advanced Databricks Recipe Generation Endpoints
+@app.route('/api/recipes/databricks/generate', methods=['POST'])
+def generate_databricks_recipe():
+    """Generate recipe using Databricks Model Serving with advanced features"""
+    try:
+        data = request.get_json() or {}
+        
+        # Extract enhanced parameters
+        ingredients = data.get('ingredients', [])
+        meal_type = data.get('meal_type', 'dinner')
+        dietary_preferences = data.get('dietary_preferences', [])
+        nutrition_goals = data.get('nutrition_goals', {})
+        cuisine_style = data.get('cuisine_style', 'international')
+        servings = data.get('servings', 2)
+        cooking_time = data.get('cooking_time')
+        skill_level = data.get('skill_level', 'intermediate')
+        
+        # Databricks recipe generation not yet implemented - return placeholder
+        return jsonify({'error': 'Databricks recipe generation feature coming soon!'}), 501
+        
+    except Exception as e:
+        return jsonify({'error': f'Databricks recipe generation error: {str(e)}'}), 500
+
+
+@app.route('/api/recipes/databricks/batch', methods=['POST'])
+def generate_batch_recipes():
+    """Generate multiple recipes with variety using Databricks"""
+    try:
+        data = request.get_json() or {}
+        
+        count = data.get('count', 5)
+        variety_params = data.get('variety_params')
+        
+        # Batch recipe generation not yet implemented - return placeholder
+        return jsonify({'error': 'Batch recipe generation feature coming soon!'}), 501
+        
+    except Exception as e:
+        return jsonify({'error': f'Batch recipe generation error: {str(e)}'}), 500
+
+
+@app.route('/api/recipes/databricks/status', methods=['GET'])
+def databricks_status():
+    """Check Databricks Model Serving status"""
+    try:
+        # Databricks status check not yet implemented - return placeholder
+        return jsonify({
+            'databricks_available': False,
+            'service': 'Databricks Model Serving',
+            'status': 'not_configured',
+            'message': 'Databricks integration coming soon!'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Status check error: {str(e)}'}), 500
 
 
 if __name__ == '__main__':

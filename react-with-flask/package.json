@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@aws-amplify/ui-react": "^6.13.0",
+    "@cedar-os/backend": "^0.0.12",
     "aws-amplify": "^6.15.6",
+    "cedar-os-components": "^0.0.15",
     "oidc-client-ts": "^3.3.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
