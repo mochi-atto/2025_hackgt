@@ -3,10 +3,14 @@ Mosaic AI Model Serving - Nutrition AI Assistant
 Uses Databricks Mosaic AI Model Serving with OpenAI GPT as external model
 Qualifies for Databricks Open Source prize by using Databricks infrastructure
 """
+import os
+from dotenv import load_dotenv
 import json
 import os
 from typing import Dict, List, Optional
 from openai import OpenAI
+
+load_dotenv()
 
 # Import USDA queries directly to avoid circular dependency
 try:
@@ -30,7 +34,7 @@ class MosaicNutritionAI:
     def _setup_clients(self):
         """Setup OpenAI client for external model serving through Mosaic AI"""
         # Use the working API key from our tests
-        api_key = "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"
+        api_key = os.getenv("OPENAI_KEY")
         
         try:
             self.openai_client = OpenAI(api_key=api_key, timeout=30.0)
