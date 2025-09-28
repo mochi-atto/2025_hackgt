@@ -4,13 +4,14 @@ Uses Databricks Mosaic AI Model Serving with OpenAI GPT as external model
 Qualifies for Databricks Open Source prize by using Databricks infrastructure
 """
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 import json
 import os
 from typing import Dict, List, Optional
 from openai import OpenAI
 
-load_dotenv()
+# Load .env from parent/project root if needed and override stale env vars
+load_dotenv(find_dotenv(), override=True)
 
 # Import USDA queries directly to avoid circular dependency
 try:
@@ -141,6 +142,22 @@ Key guidelines:
 - Be encouraging and supportive
 - If asked about medical conditions, recommend consulting healthcare providers
 
+Response format (required):
+1) Title (if applicable)
+2) Ingredients or key items (when relevant)
+3) Steps or guidance (numbered, concise)
+4) Macros per serving (required)
+   - Calories: <number> kcal
+   - Protein: <number> g
+   - Carbs: <number> g
+   - Fat: <number> g
+
+Rules for macros:
+- If USDA data is provided, base macros on it. Otherwise, provide best-effort estimates and note they are approximate.
+- Keep units consistent (kcal, g).
+- At the very end, include a single-line JSON object inside these tags for parsing by the app:
+  <MACROS_JSON>{"macros_per_serving": {"calories": <number>, "protein_g": <number>, "carbs_g": <number>, "fat_g": <number>}, "confidence": <0-1> }</MACROS_JSON>
+
 Focus on being helpful, accurate, and educational."""
 
         user_prompt = f"""User question: {user_message}
@@ -218,9 +235,163 @@ Try asking me about specific foods like:
 
 I use real USDA nutrition data to give you accurate information! 🎯"""
 
+    def get_user_grocery_inventory(self, user_id: str = "demo_user") -> list:
+        """Get user's current grocery inventory for recipe suggestions"""
+        try:
+            from db import SessionLocal
+            from models import UserGrocery, FoodItem, CustomFood
+            from sqlalchemy.orm import joinedload
+            from datetime import date
+            
+            session = SessionLocal()
+            try:
+                # Get non-expired groceries
+                groceries = session.query(UserGrocery).filter(
+                    UserGrocery.user_id == user_id,
+                    UserGrocery.is_expired == False,
+                    UserGrocery.quantity > 0
+                ).options(
+                    joinedload(UserGrocery.food_item),
+                    joinedload(UserGrocery.custom_food)
+                ).all()
+                
+                inventory_list = []
+                for grocery in groceries:
+                    # Calculate days until expiry
+                    days_until_expiry = None
+                    if grocery.expiration_date:
+                        days_until_expiry = (grocery.expiration_date - date.today()).days
+                    
+                    food_name = grocery.food_item.name if grocery.food_item else grocery.custom_food.name
+                    inventory_list.append({
+                        'name': food_name,
+                        'quantity': grocery.quantity,
+                        'unit': grocery.unit,
+                        'location': grocery.location,
+                        'days_until_expiry': days_until_expiry,
+                        'priority': 'high' if days_until_expiry and days_until_expiry <= 3 else 'normal'
+                    })
+                
+                return inventory_list
+            finally:
+                session.close()
+                
+        except Exception as e:
+            print(f"Warning: Could not fetch user inventory: {e}")
+            return []
+    
+    def suggest_recipes_with_inventory(self, user_message: str, user_id: str = "demo_user") -> str:
+        """Generate recipe suggestions based on user's available groceries"""
+        
+        # Get user's current inventory
+        inventory = self.get_user_grocery_inventory(user_id)
+        
+        # Create inventory context
+        inventory_context = ""
+        if inventory:
+            inventory_context = "\nUser's Current Grocery Inventory:\n"
+            high_priority_items = [item for item in inventory if item['priority'] == 'high']
+            normal_items = [item for item in inventory if item['priority'] == 'normal']
+            
+            if high_priority_items:
+                inventory_context += "⚠️ EXPIRING SOON (use first):\n"
+                for item in high_priority_items:
+                    inventory_context += f"- {item['quantity']} {item['unit']} {item['name']} (expires in {item['days_until_expiry']} days)\n"
+            
+            if normal_items:
+                inventory_context += "\n📦 Available ingredients:\n"
+                for item in normal_items[:10]:  # Limit for prompt size
+                    expiry_info = f" (expires in {item['days_until_expiry']} days)" if item['days_until_expiry'] else ""
+                    inventory_context += f"- {item['quantity']} {item['unit']} {item['name']}{expiry_info}\n"
+        else:
+            inventory_context = "\n(No grocery inventory available - providing general recipe advice)\n"
+        
+        # Generate AI response with inventory context
+        return self._generate_inventory_aware_response(user_message, inventory_context)
+    
+    def _generate_inventory_aware_response(self, user_message: str, inventory_context: str) -> str:
+        """Generate recipe suggestions considering user's inventory"""
+        
+        if not self.ready:
+            raise Exception("MosaicML client not ready")
+        
+        system_prompt = """You are a creative chef and nutrition expert who specializes in helping people use their existing groceries efficiently.
+        
+Key guidelines:
+- PRIORITIZE ingredients that are expiring soon (1–3 days) to reduce food waste
+- Suggest recipes that use multiple items from their inventory
+- Provide specific, actionable recipe suggestions with steps
+- Include approximate cooking times and difficulty levels
+- If they have expiring items, emphasize using those first
+- Be creative but practical with ingredient substitutions
+- Include nutritional benefits when relevant
+
+Response format (required):
+1) Title
+2) Servings and Total Time
+3) Ingredients (with quantities from inventory when possible)
+4) Steps (numbered, concise)
+5) Macros per serving (required)
+   - Calories: <number> kcal
+   - Protein: <number> g
+   - Carbs: <number> g
+   - Fat: <number> g
+
+Rules for macros:
+- If USDA data is provided, base macros on it. Otherwise, provide best-effort estimates and note they are approximate.
+- Keep units consistent (kcal, g).
+- At the very end, include a single-line JSON object inside these tags for parsing by the app:
+  <MACROS_JSON>{"macros_per_serving": {"calories": <number>, "protein_g": <number>, "carbs_g": <number>, "fat_g": <number>}, "confidence": <0-1> }</MACROS_JSON>
+
+Respond with enthusiasm and practical cooking advice!"""
+
+        user_prompt = f"""User question: {user_message}
+
+{inventory_context}
+
+Based on their available groceries, please suggest specific recipes they can make. Focus especially on using items that are expiring soon to minimize food waste!"""
+
+        try:
+            print("🍳 Generating inventory-aware recipe suggestions...")
+            response = self.openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=600,
+                temperature=0.8  # Higher creativity for recipes
+            )
+            
+            result = response.choices[0].message.content.strip()
+            print(f"✅ Recipe suggestions generated: {len(result)} characters")
+            return result
+            
+        except Exception as e:
+            print(f"❌ Error generating recipe suggestions: {e}")
+            raise e
+    
     def is_ready(self) -> bool:
         """Check if Mosaic AI Model Serving is ready"""
         return hasattr(self, 'ready') and self.ready and self.openai_client is not None
+
+    def extract_macros_json(self, text: str) -> Optional[Dict]:
+        """Extract MACROS_JSON block from AI text response.
+        Returns a dict with keys like macros_per_serving and confidence, or None if not found/parsable.
+        """
+        try:
+            import re, json
+            # Primary: look for tagged JSON
+            m = re.search(r"<MACROS_JSON>\s*(\{.*?\})\s*</MACROS_JSON>", text, re.DOTALL)
+            if m:
+                return json.loads(m.group(1))
+            # Fallback: try to find a trailing JSON object
+            m2 = re.search(r"(\{\s*\"macros_per_serving\".*\})", text, re.DOTALL)
+            if m2:
+                return json.loads(m2.group(1))
+        except Exception:
+            return None
+        return None
 
 
 # Global instance for Flask app

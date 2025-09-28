@@ -7,13 +7,16 @@ This will help isolate if the issue is with the AI client or Flask integration
 import sys
 import os
 from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def test_mosaicml_direct():
     """Test MosaicML API directly without any Flask dependencies"""
     
     print("🧪 Testing MosaicML API directly...")
     
-    api_key = "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"
+    api_key = os.getenv("OPENAI_KEY")
     
     try:
         print("⏳ Initializing OpenAI client...")
@@ -51,7 +54,7 @@ def test_nutrition_ai_without_flask():
     print("\n🧪 Testing nutrition AI logic without Flask...")
     
     # Simple version that doesn't call Flask API
-    api_key = "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"
+    api_key = os.getenv("OPENAI_KEY")
     
     try:
         client = OpenAI(api_key=api_key, timeout=30.0)

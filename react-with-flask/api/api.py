@@ -2,6 +2,16 @@ import time
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
+# Load environment variables (for OPENAI_KEY in .env)
+import os
+try:
+    from dotenv import load_dotenv, find_dotenv
+    # Find .env starting from here and upwards (project root has .env)
+    load_dotenv(find_dotenv(), override=True)
+except Exception:
+    # Safe fallback if dotenv isn't available; env vars will still work if set in the shell
+    pass
+
 # Import our MosaicML AI assistant
 try:
     from .mosaic_nutrition_ai import mosaic_nutrition_ai
@@ -11,14 +21,14 @@ except ImportError:
 # Robust imports to work both as a module and as a script
 try:
     from .db import init_db, SessionLocal
-    from .models import FoodItem, NutritionFacts
+    from .models import FoodItem, NutritionFacts, CustomFood, UserGrocery
     from .usda_db import USDA_ENGINE
     from .usda_queries import search_usda, lookup_upc, get_basic_nutrients, get_food_basic
 except ImportError:  # Running as a script
     import os, sys
     sys.path.append(os.path.dirname(__file__))
     from db import init_db, SessionLocal
-    from models import FoodItem, NutritionFacts
+    from models import FoodItem, NutritionFacts, CustomFood, UserGrocery
     from usda_db import USDA_ENGINE
     from usda_queries import search_usda, lookup_upc, get_basic_nutrients, get_food_basic
 
@@ -40,7 +50,13 @@ def test_ai():
     try:
         from openai import OpenAI
         
-        api_key = "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"
+        api_key = os.getenv("OPENAI_KEY")
+        if not api_key:
+            return jsonify({
+                'success': False,
+                'error': 'Missing OPENAI_KEY in environment/.env',
+                'error_type': 'MissingCredentials'
+            }), 500
         
         client = OpenAI(api_key=api_key, timeout=10.0)
         
@@ -268,9 +284,17 @@ def ai_chat():
         
         print(f"✅ [AI Chat] Response generated: {len(ai_response)} characters")
         
+        # Try to extract macros JSON from the AI response
+        macros = None
+        try:
+            macros = mosaic_nutrition_ai.extract_macros_json(ai_response)
+        except Exception:
+            macros = None
+        
         response_data = {
             'user_message': user_message,
             'ai_response': ai_response,
+            'macros': macros,
             'timestamp': time.time(),
             'powered_by': 'MosaicML (Databricks Open Source)'
         }
@@ -301,6 +325,63 @@ def ai_status():
         'model': 'Databricks Open Source',
         'status': 'ready' if ai_ready else 'initializing'
     })
+
+
+@app.route('/api/ai/recipe-suggestions', methods=['POST'])
+def ai_recipe_suggestions():
+    """AI-powered recipe suggestions based on user's grocery inventory"""
+    print(f"🍳 [Recipe Suggestions] Starting request processing at {time.time()}")
+    
+    try:
+        print("📝 [Recipe Suggestions] Parsing request data...")
+        data = request.get_json()
+        user_message = data.get('message', 'What can I cook with my available groceries?').strip()
+        user_id = data.get('user_id', 'demo_user')
+        
+        print(f"💬 [Recipe Suggestions] User message: {user_message}")
+        print(f"👤 [Recipe Suggestions] User ID: {user_id}")
+        
+        if not user_message:
+            print("❌ [Recipe Suggestions] Empty message received")
+            return jsonify({'error': 'Message is required'}), 400
+        
+        print("🤖 [Recipe Suggestions] Calling inventory-aware AI...")
+        # Generate recipe suggestions based on user's groceries
+        ai_response = mosaic_nutrition_ai.suggest_recipes_with_inventory(user_message, user_id)
+        
+        print(f"✅ [Recipe Suggestions] Suggestions generated: {len(ai_response)} characters")
+        
+        # Try to extract macros JSON from the AI response
+        macros = None
+        try:
+            macros = mosaic_nutrition_ai.extract_macros_json(ai_response)
+        except Exception:
+            macros = None
+        
+        response_data = {
+            'user_message': user_message,
+            'user_id': user_id,
+            'recipe_suggestions': ai_response,
+            'macros': macros,
+            'timestamp': time.time(),
+            'powered_by': 'MosaicML + User Grocery Inventory',
+            'feature': 'inventory_aware_recipes'
+        }
+        
+        print("📤 [Recipe Suggestions] Returning suggestions to client")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        print(f"❌ [Recipe Suggestions] Error occurred: {str(e)}")
+        print(f"❌ [Recipe Suggestions] Error type: {type(e)}")
+        import traceback
+        print(f"❌ [Recipe Suggestions] Traceback: {traceback.format_exc()}")
+        
+        return jsonify({
+            'error': f'Recipe suggestion service error: {str(e)}',
+            'error_type': str(type(e)),
+            'timestamp': time.time()
+        }), 500
 
 
 # Recipe Generation Endpoints
@@ -412,5 +493,27 @@ def databricks_status():
         return jsonify({'error': f'Status check error: {str(e)}'}), 500
 
 
+# Register grocery management endpoints
+try:
+    from grocery_endpoints import register_grocery_routes
+    register_grocery_routes(app)
+    print("✅ Grocery management endpoints registered")
+except ImportError as e:
+    print(f"⚠️  Could not import grocery endpoints: {e}")
+except Exception as e:
+    print(f"❌ Error registering grocery endpoints: {e}")
+
+# Register favorites endpoints
+try:
+    from favorites_endpoints import register_favorites_routes
+    register_favorites_routes(app)
+    print("✅ Favorites endpoints registered")
+except ImportError as e:
+    print(f"⚠️  Could not import favorites endpoints: {e}")
+except Exception as e:
+    print(f"❌ Error registering favorites endpoints: {e}")
+
+
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    # Run without reloader to avoid duplicate processes and port conflicts
+    app.run(debug=False, port=5001, use_reloader=False)
