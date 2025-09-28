@@ -11,7 +11,7 @@ const cognitoAuthConfig = {
   client_id: "2v7frs8eeard997vkfaq1smslt",
   redirect_uri: "http://localhost:5173/", // Fixed to match actual dev server port
   response_type: "code",
-  scope: "openid email phone", // Match your AWS Console scopes exactly
+  scope: "openid email phone profile", // Added 'profile' scope to get name and other profile info
 };
 
 createRoot(document.getElementById('root')).render(

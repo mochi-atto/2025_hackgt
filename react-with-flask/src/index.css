@@ -1,3 +1,6 @@
+/* Import CSS variables from landing.css */
+@import url('./landing.css');
+
 /* CSS Reset for full-screen layout */
 * {
   margin: 0;
@@ -19,7 +22,7 @@ html, body {
 
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  background-color: var(--bg-slate);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -29,11 +32,11 @@ html, body {
 
 a {
   font-weight: 500;
-  color: #646cff;
+  color: var(--vite-blue);
   text-decoration: inherit;
 }
 a:hover {
-  color: #535bf2;
+  color: var(--vite-purple);
 }
 
 body {
@@ -62,27 +65,27 @@ button {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
+  background-color: var(--bg-dark);
   cursor: pointer;
   transition: border-color 0.25s;
 }
 button:hover {
-  border-color: #646cff;
+  border-color: var(--vite-blue);
 }
 button:focus,
 button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+  outline: var(--focus-ring);
 }
 
 @media (prefers-color-scheme: light) {
   :root {
     color: #213547;
-    background-color: #ffffff;
+    background-color: var(--white);
   }
   a:hover {
-    color: #747bff;
+    color: var(--vite-light);
   }
   button {
-    background-color: #f9f9f9;
+    background-color: var(--bg-light);
   }
 }
