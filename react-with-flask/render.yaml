@@ -1,0 +1,42 @@
+services:
+  # Flask Backend API
+  - type: web
+    name: flask-api
+    env: python
+    plan: free
+    buildCommand: cd api && pip install -r requirements.txt
+    startCommand: cd api && gunicorn --bind 0.0.0.0:$PORT api:app
+    healthCheckPath: /api/time
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: PYTHONPATH
+        value: /opt/render/project/src/api
+      - key: OPENAI_KEY
+        sync: false  # Set this in Render dashboard as a secret
+    
+  # React Frontend (Static Site)
+  - type: web
+    name: react-frontend  
+    env: static
+    plan: free
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://your-flask-api-service.onrender.com/api/*
+      - type: rewrite  
+        source: /*
+        destination: /index.html
+
+  # PostgreSQL Database (Optional - for replacing SQLite)
+  - type: pserv
+    name: postgres-db
+    plan: free
+    env: postgresql
+    ipAllowList: []  # Allow all IPs for free tier
+
+# Environment variables that need to be set in Render dashboard:
+# OPENAI_KEY - Your OpenAI API key
+# DATABASE_URL - Will be auto-provided by PostgreSQL service

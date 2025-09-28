@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session, DeclarativeBase
+from db_config import get_database_url, is_production
 
 
 class Base(DeclarativeBase):
@@ -10,6 +12,7 @@ class Base(DeclarativeBase):
 
 
 def get_db_path() -> Path:
+    """Get SQLite database path for local development."""
     # Project root is two levels up from this file: react-with-flask/api -> 2025_hackgt
     project_root = Path(__file__).resolve().parents[2]
     data_dir = project_root / "data"
@@ -18,9 +21,24 @@ def get_db_path() -> Path:
 
 
 def get_engine(echo: bool = False):
-    db_path = get_db_path()
-    url = f"sqlite:///{db_path}"
-    engine = create_engine(url, echo=echo, future=True)
+    """Get database engine - PostgreSQL in production, SQLite in development."""
+    if is_production():
+        # Use PostgreSQL in production
+        database_url = get_database_url()
+        engine = create_engine(
+            database_url,
+            echo=echo,
+            future=True,
+            # PostgreSQL specific settings
+            pool_pre_ping=True,
+            pool_recycle=300
+        )
+    else:
+        # Use SQLite in development
+        db_path = get_db_path()
+        url = f"sqlite:///{db_path}"
+        engine = create_engine(url, echo=echo, future=True)
+    
     return engine
 
 

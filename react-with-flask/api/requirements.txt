@@ -7,3 +7,5 @@ openai>=1.55.0
 # Let openai manage httpx version; no manual pin to avoid compat issues
 python-dotenv==1.0.1
 mosaicml-streaming==0.7.4
+gunicorn==21.2.0
+psycopg2-binary==2.9.9

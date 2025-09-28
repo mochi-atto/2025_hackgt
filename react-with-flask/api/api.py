@@ -44,7 +44,16 @@ except ImportError:  # Running as a script
 
 app = Flask(__name__)
 # Configure CORS for React frontend
-CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
+# Get allowed origins from environment or use defaults
+allowed_origins = os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(',')
+if os.getenv('FLASK_ENV') == 'production':
+    # Add your Render frontend URL here
+    allowed_origins.extend([
+        'https://your-react-frontend.onrender.com',
+        'https://*.onrender.com'  # Allow any Render subdomain
+    ])
+
+CORS(app, origins=allowed_origins, 
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization"])
 
