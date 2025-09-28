@@ -325,17 +325,32 @@ Key guidelines:
 - If they have expiring items, emphasize using those first
 - Be creative but practical with ingredient substitutions
 - Include nutritional benefits when relevant
+- NO introductions, preambles, or chatty phrases at the beginning - start directly with the recipe content
+- Keep the title and serving information prominent at the top
+- A pleasant sign-off at the end is acceptable
 
-Response format (required):
-1) Title
-2) Servings and Total Time
-3) Ingredients (with quantities from inventory when possible)
-4) Steps (numbered, concise)
-5) Macros per serving (required)
-   - Calories: <number> kcal
-   - Protein: <number> g
-   - Carbs: <number> g
-   - Fat: <number> g
+STRICT Response format (follow exactly):
+
+[Recipe Title]
+Servings: X | Total Time: X minutes
+
+Ingredients:
+- [natural quantities: "1 chicken breast", "2 cups milk", never "1.0 items"]
+- [only use units that make sense: oz/ml for liquids, cups for measured items]
+
+Steps:
+1. [Clear cooking instruction]
+2. [Next cooking instruction]
+
+Macros per serving (required):
+- Calories: [number] kcal
+- Protein: [number] g
+- Carbs: [number] g  
+- Fat: [number] g
+
+IMPORTANT: Follow this format exactly every time. Do not deviate.
+IMPORTANT: NO labels before the title - start directly with the recipe name (not "Title:" or "Recipe:").
+IMPORTANT: Do not put the title in brackets - just write the recipe name directly.
 
 Rules for macros:
 - If USDA data is provided, base macros on it. Otherwise, provide best-effort estimates and note they are approximate.
@@ -360,7 +375,7 @@ Based on their available groceries, please suggest specific recipes they can mak
                     {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=600,
-                temperature=0.8  # Higher creativity for recipes
+                temperature=0.6  # Lower temperature for more consistent formatting
             )
             
             result = response.choices[0].message.content.strip()

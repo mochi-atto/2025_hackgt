@@ -51,7 +51,8 @@ function Dashboard() {
     setFridgeError('');
     try {
       const token = getAccessToken();
-      const resp = await fetch(`${API_BASE}/api/fridge`, {
+      const userId = auth.user?.profile?.sub || 'demo_user';
+      const resp = await fetch(`${API_BASE}/api/fridge?user_id=${userId}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!resp.ok) {
@@ -92,11 +93,13 @@ function Dashboard() {
     }
   };
 
-  // Load fridge items and favorites on component mount
+  // Load fridge items and favorites when auth is ready
   useEffect(() => {
-    fetchFridgeItems();
-    fetchFavorites();
-  }, []);
+    if (auth.isAuthenticated && !auth.isLoading) {
+      fetchFridgeItems();
+      fetchFavorites();
+    }
+  }, [auth.isAuthenticated, auth.isLoading]);
 
   // Helper function to get user's display name
   const getDisplayName = () => {
@@ -202,6 +205,7 @@ function Dashboard() {
     setAddMessage('');
     try {
       const token = getAccessToken();
+      const userId = auth.user?.profile?.sub || 'demo_user';
       const resp = await fetch(`${API_BASE}/api/fridge`, {
         method: 'POST',
         headers: {
@@ -209,6 +213,7 @@ function Dashboard() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
+          user_id: userId,
           item_id: item.id || null,
           name: item.name,
           category: item.category || null,
@@ -239,6 +244,7 @@ function Dashboard() {
     setAddMessage('');
     try {
       const token = getAccessToken();
+      const userId = auth.user?.profile?.sub || 'demo_user';
       const resp = await fetch(`${API_BASE}/api/fridge`, {
         method: 'POST',
         headers: {
@@ -246,6 +252,7 @@ function Dashboard() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
+          user_id: userId,
           item_id: null, // No database ID for custom foods
           name: foodName.trim(),
           category: 'Custom',
@@ -275,7 +282,8 @@ function Dashboard() {
     setDeletingIds((prev) => ({ ...prev, [itemId]: true }));
     try {
       const token = getAccessToken();
-      const resp = await fetch(`${API_BASE}/api/fridge/${itemId}`, {
+      const userId = auth.user?.profile?.sub || 'demo_user';
+      const resp = await fetch(`${API_BASE}/api/fridge/${itemId}?user_id=${userId}`, {
         method: 'DELETE',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
@@ -340,9 +348,11 @@ function Dashboard() {
 
     try {
       const token = getAccessToken();
+      const userId = auth.user?.profile?.sub || 'demo_user';
       
       // Prepare the update data
       const updateData = {
+        user_id: userId,
         quantity: parseFloat(formData.quantity),
         unit: formData.unit,
       };
@@ -809,7 +819,7 @@ function Dashboard() {
                     <li key={favorite.id} className="search-result-row">
                       <div className="search-result-main">
                         <span className="result-name">{favorite.display_name}</span>
-                        {favorite.category && <span className="result-category">{favorite.category}</span>}
+                        {favorite.food_info?.category && <span className="result-category">{favorite.food_info.category}</span>}
                       </div>
                       <div className="search-result-actions">
                         <button
@@ -823,11 +833,17 @@ function Dashboard() {
                         <button
                           className="btn btn-primary"
                           onClick={() => {
-                            // Create an item object that matches the expected format
+                            // Create an item object that matches the expected format for handleAddToFridge
                             const item = {
-                              id: favorite.food_item_id || favorite.custom_food_id || favorite.id,
+                              // Use the appropriate ID format based on favorite type
+                              id: favorite.type === 'usda' ? 
+                                `local_${favorite.food_item_id}` : 
+                                `custom_${favorite.custom_food_id}`,
                               name: favorite.display_name,
-                              category: favorite.category
+                              category: favorite.food_info?.category || 'Unknown',
+                              source: favorite.type === 'usda' ? 'local' : 'custom',
+                              food_item_id: favorite.food_item_id,
+                              custom_food_id: favorite.custom_food_id
                             };
                             handleAddToFridge(item);
                           }}
@@ -1048,7 +1064,7 @@ function Dashboard() {
                   // Recipe response display
                   <div className="recipe-response">
                     <div className="recipe-response-header">
-                      <button className="btn btn-secondary btn-sm" onClick={resetRecipe}>
+                      <button className="btn btn-primary btn-sm" onClick={resetRecipe}>
                         ← Generate New Recipe
                       </button>
                     </div>

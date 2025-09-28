@@ -88,6 +88,8 @@
 .dashboard-grid {
   display: grid;
   grid-template-columns: 1fr 1fr; /* Two equal columns */
+  grid-auto-rows: max-content; /* Allow rows to size to their content */
+  align-items: start; /* Align items to the start instead of stretching */
   gap: 2rem;
   margin-bottom: 3rem;
 }
@@ -808,7 +810,7 @@ input:checked + .toggle-slider:before {
   color: var(--text-tertiary);
   font-size: 0.8rem;
   font-weight: normal;
-  text-align: left;
+  text-align: center;
 }
 
 .recipe-form {
