@@ -219,8 +219,8 @@
 }
 
 .btn-primary {
-  background: var(--primary-color);
-  color: var(--white);
+  background: var(--primary-color) !important;
+  color: var(--white) !important;
 }
 
 .btn-primary:hover {
@@ -454,6 +454,30 @@ input:checked + .toggle-slider:before {
   font-weight: 500;
   color: var(--text-primary);
   user-select: none;
+}
+
+/* Custom food option styles */
+.custom-food-row {
+  border: 2px dashed var(--primary-color) !important;
+  background: rgba(99, 102, 241, 0.05) !important;
+  margin-top: 1rem;
+}
+
+.custom-food-row:hover {
+  background: rgba(99, 102, 241, 0.1) !important;
+  transform: none; /* Override the hover transform */
+}
+
+.custom-food-text {
+  color: var(--primary-color) !important;
+  font-style: italic;
+  font-weight: 500;
+}
+
+.custom-category {
+  background: var(--primary-color) !important;
+  color: var(--white) !important;
+  font-weight: 600;
 }
 
 /* Fridge Items Card Styles */

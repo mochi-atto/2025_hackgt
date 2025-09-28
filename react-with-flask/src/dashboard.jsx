@@ -232,6 +232,43 @@ function Dashboard() {
     }
   };
 
+  // Handle adding custom food items
+  const handleAddCustomFood = async (foodName) => {
+    const customKey = `custom-${foodName}`;
+    setAddingIds((prev) => ({ ...prev, [customKey]: true }));
+    setAddMessage('');
+    try {
+      const token = getAccessToken();
+      const resp = await fetch(`${API_BASE}/api/fridge`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          item_id: null, // No database ID for custom foods
+          name: foodName.trim(),
+          category: 'Custom',
+          is_custom: true // Flag to indicate this is a custom food item
+        }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || `Add failed with status ${resp.status}`);
+      }
+      setAddMessage(`"${foodName}" added as custom food to your fridge!`);
+    } catch (err) {
+      console.error('Add custom food error:', err);
+      setAddMessage(`Failed to add custom food "${foodName}": ${err.message}`);
+    } finally {
+      setAddingIds((prev) => ({ ...prev, [customKey]: false }));
+      // Clear message after a few seconds
+      setTimeout(() => setAddMessage(''), 4000);
+      // Refresh fridge items after adding
+      fetchFridgeItems();
+    }
+  };
+
 
   // Delete item from fridge
   const handleDeleteFromFridge = async (itemId) => {
@@ -747,6 +784,25 @@ function Dashboard() {
                       </div>
                     </li>
                   ))}
+                  
+                  {/* Add custom food option after search results */}
+                  {!showFavorites && hasSearched && !searching && (
+                    <li className="search-result-row custom-food-row">
+                      <div className="search-result-main">
+                        <span className="result-name custom-food-text">📝 Add "{query}" as custom food</span>
+                        <span className="result-category custom-category">Custom</span>
+                      </div>
+                      <div className="search-result-actions">
+                        <button
+                          className="btn btn-primary"
+                          onClick={() => handleAddCustomFood(query)}
+                          disabled={!!addingIds[`custom-${query}`] || !query.trim()}
+                        >
+                          {addingIds[`custom-${query}`] ? 'Adding...' : 'Add Custom'}
+                        </button>
+                      </div>
+                    </li>
+                  )}
                   
                   {/* Show favorites when toggle is on */}
                   {showFavorites && favorites.map((favorite) => (
