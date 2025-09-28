@@ -33,7 +33,10 @@ except ImportError:  # Running as a script
     from usda_queries import search_usda, lookup_upc, get_basic_nutrients, get_food_basic
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for React frontend
+# Configure CORS for React frontend
+CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization"])
 
 # Initialize database and tables on startup
 init_db()
