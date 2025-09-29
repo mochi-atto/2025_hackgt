@@ -13,8 +13,9 @@ def get_usda_db_path() -> Path:
         return Path(env_path).expanduser().resolve()
 
     # Fallback to project-local default
-    project_root = Path(__file__).resolve().parents[2]
-    db_path = project_root / "data" / "vendor" / "USDADataBase" / "USDA.sqlite"
+    # Current file is in react-with-flask/api/, so we need to go up 1 level to react-with-flask/
+    react_with_flask_root = Path(__file__).resolve().parents[1]
+    db_path = react_with_flask_root / "data" / "vendor" / "USDADataBase" / "USDA.sqlite"
     return db_path
 
 

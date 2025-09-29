@@ -77,10 +77,122 @@ def register_favorites_routes(app):
         custom_food_id = data.get('custom_food_id')
         display_name = data.get('display_name')
         notes = data.get('notes')
+        
+        # Handle USDA items from search results
+        fdc_id = data.get('fdc_id')  # For USDA items from search
+        source = data.get('source')  # "usda" for USDA items
+        
+        # Handle USDA items - try to find existing or import if needed
+        if source == 'usda' and fdc_id and not food_item_id:
+            print(f"🔄 Processing USDA item with FDC ID: {fdc_id}, display_name: '{display_name}'")
+            
+            # First, check if we already have this as a FoodItem
+            lookup_session = SessionLocal()
+            try:
+                # Try to find by display name or similar name patterns
+                search_conditions = [FoodItem.name.ilike(f'%{display_name}%')]
+                
+                # Add specific food type searches
+                display_lower = display_name.lower()
+                if 'chicken' in display_lower:
+                    search_conditions.append(FoodItem.name.ilike('%chicken%'))
+                if 'milk' in display_lower:
+                    search_conditions.append(FoodItem.name.ilike('%milk%'))
+                if 'beef' in display_lower:
+                    search_conditions.append(FoodItem.name.ilike('%beef%'))
+                if 'egg' in display_lower:
+                    search_conditions.append(FoodItem.name.ilike('%egg%'))
+                
+                potential_matches = lookup_session.query(FoodItem).filter(
+                    or_(*search_conditions)
+                ).limit(5).all()
+                
+                print(f"🔍 Found {len(potential_matches)} potential matches in FoodItems")
+                for match in potential_matches:
+                    print(f"  - ID: {match.id}, Name: '{match.name}', Category: '{match.category}'")
+                
+                # Use the first reasonable match, or try USDA import
+                if potential_matches:
+                    # Use the first match
+                    existing_food = potential_matches[0]
+                    food_item_id = existing_food.id
+                    display_name = display_name or existing_food.name
+                    print(f"✅ Using existing FoodItem ID: {food_item_id}")
+                else:
+                    print(f"🔄 No existing FoodItem found, attempting USDA import...")
+                    
+                    # Try to import from USDA
+                    try:
+                        from usda_queries import get_food_basic, get_basic_nutrients
+                        from usda_db import get_usda_engine
+                        
+                        usda_engine = get_usda_engine()
+                        if usda_engine:
+                            basic = get_food_basic(usda_engine, fdc_id)
+                            
+                            if basic:
+                                food_name = basic.get('description') or display_name
+                                brand = basic.get('brand_name') or basic.get('brand_owner')
+                                category = data.get('category') or basic.get('data_type') or 'USDA Food'
+                                upc = basic.get('gtin_upc')
+                                
+                                # Create new FoodItem
+                                new_food = FoodItem(
+                                    name=food_name,
+                                    brand=brand,
+                                    category=category,
+                                    upc=upc,
+                                    is_perishable=True
+                                )
+                                lookup_session.add(new_food)
+                                lookup_session.flush()
+                                
+                                # Add nutrition if available
+                                facts = get_basic_nutrients(usda_engine, fdc_id)
+                                if facts:
+                                    from models import NutritionFacts
+                                    nutrition = NutritionFacts(
+                                        food_item_id=new_food.id,
+                                        calories=facts.get('calories'),
+                                        protein_g=facts.get('protein_g'),
+                                        carbs_g=facts.get('carbs_g'),
+                                        fat_g=facts.get('fat_g'),
+                                        fiber_g=facts.get('fiber_g'),
+                                        sugar_g=facts.get('sugar_g')
+                                    )
+                                    lookup_session.add(nutrition)
+                                
+                                lookup_session.commit()
+                                food_item_id = new_food.id
+                                display_name = display_name or food_name
+                                print(f"✅ Created new FoodItem ID: {food_item_id}")
+                            else:
+                                print(f"❌ No USDA data found for FDC ID: {fdc_id}")
+                                raise Exception(f"No USDA data for FDC {fdc_id}")
+                        else:
+                            print(f"❌ USDA engine not available")
+                            raise Exception("USDA engine not available")
+                    except Exception as usda_error:
+                        lookup_session.rollback()
+                        print(f"💥 USDA import failed: {usda_error}")
+                        # Fall back to custom food
+                        from models import CustomFood
+                        custom_food = CustomFood(
+                            name=display_name,
+                            description=f"USDA item (FDC: {fdc_id}) - Import failed",
+                            user_id=user_id
+                        )
+                        lookup_session.add(custom_food)
+                        lookup_session.commit()
+                        custom_food_id = custom_food.id
+                        print(f"🔄 Created CustomFood ID: {custom_food_id}")
+                        
+            finally:
+                lookup_session.close()
 
-        # Validate one-of
+        # Validate one-of after potential USDA import
         if bool(food_item_id) == bool(custom_food_id):
-            return jsonify({'error': 'Provide exactly one of food_item_id or custom_food_id'}), 400
+            return jsonify({'error': 'Provide exactly one of food_item_id or custom_food_id, or provide USDA item details'}), 400
 
         session = SessionLocal()
         try:

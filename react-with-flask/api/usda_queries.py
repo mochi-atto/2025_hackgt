@@ -16,8 +16,8 @@ NUTRIENT_IDS = {
 
 
 def search_usda(engine: Engine, q: str, limit: int = 20) -> list[dict]:
-    # Searches across ALL food descriptions, prioritizing basic/foundation foods
-    # over branded foods to give more variety and basic ingredients
+    # Searches across ALL food descriptions, including both branded and unbranded foods
+    # Balances results to show variety from different data sources
     sql = text(
         """
         SELECT f.fdc_id,
@@ -36,13 +36,20 @@ def search_usda(engine: Engine, q: str, limit: int = 20) -> list[dict]:
            OR b.brand_owner LIKE :pat
            OR b.gtin_upc = :q
         ORDER BY 
+            -- Prioritize exact matches first
+            CASE 
+                WHEN f.description LIKE :exact_pat THEN 0
+                WHEN b.brand_name LIKE :exact_pat THEN 0
+                ELSE 1
+            END,
+            -- Then balance different food types for variety
             CASE f.data_type 
                 WHEN 'foundation_food' THEN 1
                 WHEN 'sr_legacy_food' THEN 2
-                WHEN 'survey_fndds_food' THEN 3
-                WHEN 'sub_sample_food' THEN 4
-                WHEN 'sample_food' THEN 5
-                WHEN 'branded_food' THEN 6
+                WHEN 'branded_food' THEN 3  -- Moved up to mix with unbranded
+                WHEN 'survey_fndds_food' THEN 4
+                WHEN 'sub_sample_food' THEN 5
+                WHEN 'sample_food' THEN 6
                 ELSE 7
             END,
             LENGTH(f.description),
@@ -51,7 +58,12 @@ def search_usda(engine: Engine, q: str, limit: int = 20) -> list[dict]:
         """
     )
     with engine.connect() as conn:
-        rows: Iterable[Row] = conn.execute(sql, {"pat": f"%{q}%", "q": q, "limit": limit}).fetchall()
+        rows: Iterable[Row] = conn.execute(sql, {
+            "pat": f"%{q}%", 
+            "exact_pat": f"{q}%",  # For prioritizing exact matches
+            "q": q, 
+            "limit": limit
+        }).fetchall()
     return [dict(row._mapping) for row in rows]
 
 

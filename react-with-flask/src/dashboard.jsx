@@ -480,8 +480,10 @@ function Dashboard() {
         
         // Determine if it's a USDA item or local item
         if (item.source === 'usda' && item.fdc_id) {
-          // For USDA items, we need to create a local FoodItem first or reference existing one
-          favoriteData.food_item_id = null; // The backend should handle USDA item creation
+          // For USDA items, provide the necessary data for backend import
+          favoriteData.source = 'usda';
+          favoriteData.fdc_id = item.fdc_id;
+          favoriteData.category = item.category;
         } else if (item.food_item_id) {
           favoriteData.food_item_id = item.food_item_id;
         } else if (item.custom_food_id) {

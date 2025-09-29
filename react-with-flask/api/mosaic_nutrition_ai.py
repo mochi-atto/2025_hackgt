@@ -334,15 +334,15 @@ STRICT Response format (follow exactly):
 [Recipe Title]
 Servings: X | Total Time: X minutes
 
-Ingredients:
+Ingredients
 - [natural quantities: "1 chicken breast", "2 cups milk", never "1.0 items"]
 - [only use units that make sense: oz/ml for liquids, cups for measured items]
 
-Steps:
+Steps
 1. [Clear cooking instruction]
 2. [Next cooking instruction]
 
-Macros per serving (required):
+Macros per serving
 - Calories: [number] kcal
 - Protein: [number] g
 - Carbs: [number] g  

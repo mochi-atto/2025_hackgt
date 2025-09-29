@@ -452,24 +452,31 @@ def api_get_fridge_items():
         for grocery in groceries:
             # Transform grocery data to match frontend expectations
             food_info = {}
+            item_type = 'unknown'
+            
             if grocery.food_item:
+                # This is a USDA item (imported from USDA database)
                 food_info = {
                     'name': grocery.food_item.name,
                     'brand': grocery.food_item.brand,
                     'category': grocery.food_item.category,
                 }
+                item_type = 'usda'
             elif grocery.custom_food:
+                # This is a custom food item
                 food_info = {
                     'name': grocery.custom_food.name,
                     'brand': None,
                     'category': 'Custom Food',
                 }
+                item_type = 'custom'
             
             item = {
                 'id': grocery.id,
                 'name': food_info.get('name', ''),
                 'brand': food_info.get('brand'),
                 'category': food_info.get('category'),
+                'type': item_type,  # Add type field to distinguish USDA vs custom
                 'quantity': grocery.quantity,
                 'unit': grocery.unit,
                 'expiry_date': grocery.expiration_date.isoformat() if grocery.expiration_date else None,
