@@ -53,7 +53,7 @@ basil is built as a full-stack application with:
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd react-with-flask
+   cd 2025_hackgt/react-with-flask
    ```
 
 2. **Set up the frontend**
@@ -69,7 +69,32 @@ basil is built as a full-stack application with:
    pip install -r requirements.txt
    ```
 
-4. **Create a .env file in the project root with your API keys**
+4. **Download USDA Food Data (Required for nutrition information)**
+   
+   The app requires USDA FoodData Central CSV files to provide accurate nutrition data:
+   
+   a. Download the CSV files from [USDA FoodData Central](https://fdc.nal.usda.gov/download-datasets.html)
+   b. Extract the CSV files and place them in `react-with-flask/data/vendor/FoodData_Central_csv_2024-04-18/`
+   
+   Required files:
+   - `food.csv` - Main food items database
+   - `branded_food.csv` - Branded food products
+   - `nutrient.csv` - Nutrient definitions
+   - `food_nutrient.csv` - Food-nutrient relationships (optional for basic functionality)
+
+5. **Build the USDA Database**
+   ```bash
+   cd api
+   python build_simple_usda.py
+   ```
+   
+   This will:
+   - Process millions of USDA food records
+   - Create a SQLite database with searchable food items
+   - Build indexes for fast food search and UPC lookup
+   - Takes ~5-10 minutes depending on your system
+
+6. **Create a .env file in the project root with your API keys**
    ```
    OPENAI_KEY=your_openai_key_here
    CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
@@ -81,13 +106,25 @@ basil is built as a full-stack application with:
    ```bash
    npm run api
    ```
+   
+   The API will be available at `http://localhost:5001`
 
-2. **Start the React development server**
+2. **Start the React development server** (in a new terminal)
    ```bash
    npm run dev
    ```
+   
+   The frontend will be available at `http://localhost:5173`
 
 3. **Access the application at [http://localhost:5173](http://localhost:5173)**
+
+### First Time Setup Verification
+
+After completing the setup, verify everything works:
+
+1. **Test the USDA database**: The food search should return results
+2. **Test AI integration**: Try generating a recipe (requires OpenAI API key)
+3. **Test authentication**: Sign up/login should work with AWS Cognito
 
 ## 🌟 Key Features in Detail
 
@@ -125,20 +162,23 @@ Direct integration with USDA food database provides:
 ## 📁 Project Structure
 
 ```
-react-with-flask/
-├── src/                    # React frontend source
-│   ├── components/         # Reusable React components
-│   ├── dashboard.jsx       # Main dashboard interface
-│   ├── login.jsx          # Authentication components
-│   └── aws-config.js      # AWS Cognito configuration
-├── api/                   # Flask backend
-│   ├── api.py            # Main Flask application
-│   ├── models.py         # SQLAlchemy database models
-│   ├── mosaic_nutrition_ai.py # AI integration layer
-│   ├── usda_queries.py   # USDA database operations
-│   └── requirements.txt  # Python dependencies
-├── data/                 # Database files and USDA data
-└── dist/                 # Production build output
+2025_hackgt/
+└── react-with-flask/
+    ├── src/                    # React frontend source
+    │   ├── dashboard.jsx       # Main dashboard interface
+    │   ├── landing.jsx        # Landing page
+    │   ├── login.jsx          # Authentication components
+    │   └── aws-config.js      # AWS Cognito configuration
+    ├── api/                   # Flask backend
+    │   ├── api.py            # Main Flask application
+    │   ├── models.py         # SQLAlchemy database models
+    │   ├── mosaic_nutrition_ai.py # AI integration layer
+    │   ├── usda_queries.py   # USDA database operations
+    │   ├── build_simple_usda.py # USDA database builder
+    │   └── requirements.txt  # Python dependencies
+    ├── data/                 # Database files and USDA data
+    │   └── vendor/           # USDA CSV files and SQLite DB
+    └── dist/                 # Production build output
 ```
 
 ## 🚀 Deployment
